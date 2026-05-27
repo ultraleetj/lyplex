@@ -115,7 +115,14 @@ wxPython, single window:
 ## Known gaps / TODO
 
 - [ ] Multi-page LilyPond output (paginated scroll) — harder than single strip
-- [ ] Repeats in score: LilyPond MIDI unfolds repeats; SVG does not — sync breaks
+- [ ] Repeats: LilyPond MIDI does NOT unfold repeats by default — only if score uses
+      `\unfoldRepeats` inside the `\midi {}` block. If unfolded, MIDI time extends past
+      SVG notation space → sync breaks at repeat point.
+      Strategy: compile MIDI twice from a patched copy of the .ly:
+        1. Timing MIDI — `\unfoldRepeats` stripped → stays in sync with SVG notation
+        2. Audio MIDI  — original (with `\unfoldRepeats` if present) → plays repeats for audio
+      lyplex_tool.py detects `\unfoldRepeats` in the midi block via regex, produces both
+      variants automatically. User never needs to manage this manually.
 - [ ] Lyrics / annotations in SVG: included automatically, no extra work needed
 - [ ] Dynamics / hairpins: rendered by LilyPond, visible in SVG, no special handling
 - [ ] Font embedding in cairosvg: verify Emmentaler/LilyPond fonts render correctly
