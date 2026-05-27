@@ -161,14 +161,18 @@ for a in svg_root.iter('{http://www.w3.org/2000/svg}a'):
 - Multi-voice at same beat: use x from the voice with the longer note value (drives scroll)
 - Chords: treat as single moment, take upper voice / any one notehead x
 
-**Grace notes:** generate MIDI note_on events slightly before their following main note tick
-(anticipation). Order-based grouping handles this naturally — grace tick < main tick, both in order.
-Exception: at piece start, LilyPond warns "going back in MIDI time" — grace note gets tick 0
-same as first main note. Strategy: after grouping, if two consecutive groups share the same tick,
-merge them and keep the rightmost x (the main note position). Grace note scroll position is
-irrelevant — cursor barely moves in the tiny anticipation window.
+**Grace notes:** normally produce a separate MIDI beat group at a tick slightly before the main
+note — order-based grouping handles this naturally. Exception: `lily/midi-walker.cc` clamps
+negative delta-ticks to 0 (the "Going back in MIDI time" error path), collapsing grace+main into
+one MIDI beat group while SVG still has two separate anchor groups (grace visible left of main).
 
-**Validation:** `len(svg_beat_groups) == len(midi_beat_groups)` — assert this, log mismatch.
+**Reconciliation:** when `len(svg_groups) > len(midi_groups)`, repeatedly merge the consecutive
+SVG pair with the smallest x-gap (grace note sits just left of its main note → smallest gap).
+After merging, keep the rightmost x (main note position) as the scroll target. Grace note scroll
+position is irrelevant — cursor barely moves in the tiny anticipation window. Grace notes remain
+visible in the SVG strip.
+
+**Validation:** warn and reconcile on count mismatch rather than asserting.
 
 ---
 
@@ -256,12 +260,18 @@ wxPython, single window:
 - `.ly` file picker
 - Soundfont picker (`.sf2`)
 - Resolution fields (W × H)
-- Tempo multiplier (scales timing map, does not re-render SVG)
+- Tempo multiplier (scales timing map + ffmpeg atempo; does not re-render SVG)
 - Output folder
-- "Generate HTML" button — fast path, no audio render
-- "Encode MP4" button — full pipeline
+- "Generate HTML" button — fast path, no audio render (disabled until lyplex_web.py done)
+- "Encode MP4" button — full pipeline, runs in background thread
 - Log output (streaming, carriage-return progress lines handled)
 - "Open HTML" / "Show in Explorer" buttons after completion
+
+**Accessibility (mirrors neothesia_gui.py patterns):**
+- `name=` on every interactive control (Windows UIA accessible name)
+- `StaticText` labels created before their controls (z-order = UIA LabeledBy)
+- `CreateStatusBar()` with pipeline status messages
+- `_on_char_hook` + `_focusable()` for Tab/Shift+Tab cycling within the panel
 
 ---
 
@@ -300,6 +310,7 @@ Key files in `upstream/lilypond/` for implementation reference:
 | `lily/point-and-click.cc` | `textedit://FILE:LINE:CHR:COL` URI construction |
 | `scm/define-event-classes.scm` | Event hierarchy: `note-event` ≠ `rest-event`, `multi-measure-rest-event` |
 | `scm/midi.scm` | MIDI instrument names, channel assignments |
+| `lily/midi-walker.cc` | Grace note delta-tick clamping (`output_event` clamps negative delta to 0 → tick-0 collision) |
 | `input/regression/point-and-click-types.ly` | `\pointAndClickTypes #'note-event` usage example |
 
 ---
@@ -308,8 +319,9 @@ Key files in `upstream/lilypond/` for implementation reference:
 
 - **No `\version` in `.ly`:** abort with clear error — LilyPond always declares version; missing = broken file.
 - **No SF2 / fluidsynth:** hard error before pipeline starts.
-- **SVG/MIDI beat group mismatch:** warn user, zip what fits using SVG beat groups as ground truth.
-  - _Pending investigation:_ refine alignment strategy over time (partial matching, fuzzy grouping).
+- **SVG/MIDI beat group mismatch (svg > midi):** reconcile by merging closest consecutive SVG pairs
+  (grace-note tick-0 collision path in `lily/midi-walker.cc`). Keep rightmost x after merge.
+- **SVG/MIDI beat group mismatch (svg < midi):** warn, ignore extra MIDI events.
 - **Multi-staff timing map:** staff with longest total note duration drives the timing map.
 
 ---
@@ -319,16 +331,16 @@ Key files in `upstream/lilypond/` for implementation reference:
 | File | Status |
 |------|--------|
 | `lyplex_tool.py` | Done — full pipeline implemented, CLI entry point working |
-| `lyplex_gui.py` | Not started |
+| `lyplex_gui.py` | Done — wxPython single-window GUI, background thread, CR log handling |
 | `lyplex_web.py` | Not started (low priority) |
 
-**Next task:** `lyplex_gui.py` — wxPython GUI wrapping `generate_mp4()` from `lyplex_tool.py`.
+**Next task:** `lyplex_web.py` — self-contained HTML scroll preview (low priority).
 
 ---
 
 ## Known gaps / TODO
 
-- [ ] Grace notes at piece start: merge tick-0 collisions (grace + main note both at tick 0)
+- [x] Grace notes: tick-0 collision handled by merging closest SVG pairs when svg_count > midi_count
 - [ ] Strip PNG memory: document 2–5 min limit; tiling deferred
 - [ ] Scroll clamp: before first note → offset=0; after last note → hold last position
 - [x] `~` stripping: `re.sub(r'~', '', source)` — safe, `~` is exclusively ties in practice
@@ -338,4 +350,5 @@ Key files in `upstream/lilypond/` for implementation reference:
 - [ ] Font embedding in cairosvg: verify Emmentaler/LilyPond fonts render correctly
 - [ ] Lyrics / annotations in SVG: included automatically by LilyPond, no extra work
 - [ ] Dynamics / hairpins: rendered by LilyPond, visible in SVG, no special handling
-- [ ] SVG/MIDI mismatch alignment: refine beyond simple zip (investigate fuzzy/partial matching)
+- [x] SVG/MIDI mismatch (svg>midi): reconciled via closest-pair SVG merge (grace note case)
+- [ ] SVG/MIDI mismatch (svg<midi): currently warns + truncates; no fuzzy alignment yet

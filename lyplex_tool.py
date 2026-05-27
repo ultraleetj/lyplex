@@ -341,6 +341,28 @@ def _group_by_value(items, key_fn) -> list[list]:
         groups[seen[k]].append(item)
     return groups
 
+def _merge_closest_svg_groups(svg_groups: list[list], target: int) -> list[list]:
+    """Merge consecutive SVG groups with the smallest x-gap until count == target.
+
+    Used to reconcile grace-note tick collisions: LilyPond's midi-walker clamps
+    negative grace-note deltas to 0, collapsing grace+main into one MIDI beat
+    group while SVG still has them as two separate groups.  The smallest x-gap
+    between consecutive SVG groups is the best proxy for a grace-to-main pair.
+    After merging, the group keeps the rightmost anchor x (main note position).
+    """
+    groups = [list(g) for g in svg_groups]
+    while len(groups) > target:
+        if len(groups) < 2:
+            break
+        # x representative per group = rightmost anchor
+        xs = [max(a.x for a in g) for g in groups]
+        gaps = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
+        idx = min(range(len(gaps)), key=lambda i: gaps[i])
+        merged = groups[idx] + groups[idx + 1]
+        groups = groups[:idx] + [merged] + groups[idx + 2:]
+    return groups
+
+
 def build_timing_map(
     anchors: list[AnchorInfo],
     note_ons: list[tuple[int, int]],
@@ -352,25 +374,30 @@ def build_timing_map(
     # Group MIDI note_ons by tick
     midi_groups = _group_by_value(note_ons, key_fn=lambda e: e[0])
 
-    if len(svg_groups) != len(midi_groups):
+    if len(svg_groups) > len(midi_groups):
+        # More SVG groups than MIDI groups — likely grace-note tick-0 collisions
+        # in LilyPond's MIDI writer (midi-walker.cc clamps negative deltas to 0,
+        # merging grace+main into one MIDI beat group).  Reconcile by merging
+        # the closest consecutive SVG pairs (grace note sits just left of main).
         warnings.warn(
-            f"SVG beat groups ({len(svg_groups)}) != MIDI beat groups ({len(midi_groups)}). "
-            "Using SVG count as ground truth; extra MIDI events ignored."
+            f"SVG beat groups ({len(svg_groups)}) > MIDI beat groups ({len(midi_groups)}). "
+            f"Merging {len(svg_groups) - len(midi_groups)} closest SVG pair(s) (grace notes)."
+        )
+        svg_groups = _merge_closest_svg_groups(svg_groups, len(midi_groups))
+    elif len(svg_groups) < len(midi_groups):
+        warnings.warn(
+            f"SVG beat groups ({len(svg_groups)}) < MIDI beat groups ({len(midi_groups)}). "
+            "Extra MIDI events ignored."
         )
 
     n = min(len(svg_groups), len(midi_groups))
     timing_map: list[TimingEntry] = []
 
     for i in range(n):
-        x = svg_groups[i][0].x  # all anchors in group share same x
-        tick = midi_groups[i][0][0]  # representative tick for this beat
+        x = max(a.x for a in svg_groups[i])  # rightmost anchor = main note position
+        tick = midi_groups[i][0][0]
         ms = _tick_to_ms(tick, tempo_map, ticks_per_beat)
-
-        # Grace note collision: if same ms as previous entry, keep rightmost x
-        if timing_map and abs(ms - timing_map[-1].ms) < 1.0:
-            timing_map[-1].x = max(timing_map[-1].x, x)
-        else:
-            timing_map.append(TimingEntry(ms=ms, x=x))
+        timing_map.append(TimingEntry(ms=ms, x=x))
 
     return timing_map
 
@@ -425,6 +452,20 @@ def render_audio_wav(midi_path: Path, sf2_path: str, wav_path: Path) -> None:
 # MP4 export
 # ---------------------------------------------------------------------------
 
+def _atempo_filter(multiplier: float) -> str:
+    """Build ffmpeg atempo filter chain for any multiplier in [0.25, 4.0]."""
+    filters: list[str] = []
+    r = multiplier
+    while r > 2.0 + 1e-9:
+        filters.append("atempo=2.0")
+        r /= 2.0
+    while r < 0.5 - 1e-9:
+        filters.append("atempo=0.5")
+        r /= 0.5
+    filters.append(f"atempo={r:.6f}")
+    return ",".join(filters)
+
+
 def encode_mp4(
     strip_img: Image.Image,
     timing_map: list[TimingEntry],
@@ -434,12 +475,15 @@ def encode_mp4(
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,
     fps: int = DEFAULT_FPS,
+    atempo: float = 1.0,
 ) -> None:
     _require_binary("ffmpeg")
 
     # Duration = last note ms + 2s tail
     duration_ms = timing_map[-1].ms + 2000.0
     n_frames = int(duration_ms / 1000.0 * fps) + 1
+
+    audio_filters = _atempo_filter(atempo) if abs(atempo - 1.0) > 1e-6 else None
 
     ffmpeg_cmd = [
         "ffmpeg", "-y",
@@ -451,9 +495,10 @@ def encode_mp4(
         "-c:v", "libx264",
         "-c:a", "aac",
         "-pix_fmt", "yuv420p",
-        "-shortest",
-        str(out_path),
     ]
+    if audio_filters:
+        ffmpeg_cmd += ["-filter:a", audio_filters]
+    ffmpeg_cmd += ["-shortest", str(out_path)]
 
     proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
 
@@ -497,6 +542,7 @@ def generate_mp4(
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,
     fps: int = DEFAULT_FPS,
+    tempo_multiplier: float = 1.0,
 ) -> None:
     # Preflight
     _require_binary("lilypond")
@@ -541,6 +587,9 @@ def generate_mp4(
         if not timing_map:
             raise RuntimeError("Timing map is empty after correlation.")
 
+        if abs(tempo_multiplier - 1.0) > 1e-6:
+            timing_map = [TimingEntry(ms=e.ms / tempo_multiplier, x=e.x) for e in timing_map]
+
         # Scale
         render_dpi, px_per_svgu = svg_px_scale(svg_path, height)
 
@@ -561,6 +610,7 @@ def generate_mp4(
             strip_img, timing_map, px_per_svgu,
             wav_path, Path(out_path),
             width=width, height=height, fps=fps,
+            atempo=tempo_multiplier,
         )
 
         print(f"[lyplex] done: {out_path}")
