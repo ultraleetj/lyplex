@@ -314,6 +314,18 @@ Key files in `upstream/lilypond/` for implementation reference:
 
 ---
 
+## Implementation status
+
+| File | Status |
+|------|--------|
+| `lyplex_tool.py` | Done — full pipeline implemented, CLI entry point working |
+| `lyplex_gui.py` | Not started |
+| `lyplex_web.py` | Not started (low priority) |
+
+**Next task:** `lyplex_gui.py` — wxPython GUI wrapping `generate_mp4()` from `lyplex_tool.py`.
+
+---
+
 ## Known gaps / TODO
 
 - [ ] Grace notes at piece start: merge tick-0 collisions (grace + main note both at tick 0)
