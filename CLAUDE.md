@@ -304,6 +304,16 @@ Key files in `upstream/lilypond/` for implementation reference:
 
 ---
 
+## Design decisions (resolved)
+
+- **No `\version` in `.ly`:** abort with clear error — LilyPond always declares version; missing = broken file.
+- **No SF2 / fluidsynth:** hard error before pipeline starts.
+- **SVG/MIDI beat group mismatch:** warn user, zip what fits using SVG beat groups as ground truth.
+  - _Pending investigation:_ refine alignment strategy over time (partial matching, fuzzy grouping).
+- **Multi-staff timing map:** staff with longest total note duration drives the timing map.
+
+---
+
 ## Known gaps / TODO
 
 - [ ] Grace notes at piece start: merge tick-0 collisions (grace + main note both at tick 0)
@@ -316,3 +326,4 @@ Key files in `upstream/lilypond/` for implementation reference:
 - [ ] Font embedding in cairosvg: verify Emmentaler/LilyPond fonts render correctly
 - [ ] Lyrics / annotations in SVG: included automatically by LilyPond, no extra work
 - [ ] Dynamics / hairpins: rendered by LilyPond, visible in SVG, no special handling
+- [ ] SVG/MIDI mismatch alignment: refine beyond simple zip (investigate fuzzy/partial matching)
