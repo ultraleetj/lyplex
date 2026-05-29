@@ -172,20 +172,20 @@ class MainFrame(wx.Frame):
 
         lp_sz, self._lilypond_tc = file_row(
             "Executables (*.exe)|*.exe|All files (*.*)|*.*")
-        add_row("LilyPond binary:", lp_sz, "(blank = use system PATH)")
+        add_row("LilyPond binary:", lp_sz, "ffmpeg binary")
 
         ff_sz, self._ffmpeg_tc = file_row(
             "Executables (*.exe)|*.exe|All files (*.*)|*.*",
             _default("bin/ffmpeg.exe"))
-        add_row("ffmpeg binary:", ff_sz, "(blank = use system PATH)")
+        add_row("ffmpeg binary:", ff_sz, "fluidsynth binary")
 
         fs_sz, self._fluidsynth_tc = file_row(
             "Executables (*.exe)|*.exe|All files (*.*)|*.*",
             _default("bin/fluidsynth/fluidsynth.exe"))
-        add_row("fluidsynth binary:", fs_sz, "(blank = use system PATH)")
+        add_row("fluidsynth binary:", fs_sz, "Output folder")
 
         dir_sz, self._dir_tc = dir_row()
-        add_row("Output folder:", dir_sz, "(where to save the MP4)")
+        add_row("Output folder:", dir_sz, "Video width")
 
         # --- numeric rows ---
 
