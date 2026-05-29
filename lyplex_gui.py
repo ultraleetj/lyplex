@@ -57,6 +57,29 @@ class _LogStream:
 # Main window
 # ---------------------------------------------------------------------------
 
+class _AccessibleName(wx.Accessible):
+    """Supplies an explicit accessible name for composite controls whose
+    sub-windows don't inherit the UIA LabeledBy from the parent panel."""
+
+    def __init__(self, window: wx.Window, name: str) -> None:
+        super().__init__(window)
+        self._name = name
+
+    def GetName(self, child_id: int) -> tuple:
+        if child_id == 0:
+            return wx.ACC_OK, self._name
+        return wx.ACC_NOT_IMPLEMENTED, ""
+
+
+def _label(ctrl: wx.Window, name: str) -> None:
+    """Set accessible name on ctrl; also on its internal TextCtrl if present."""
+    ctrl.SetAccessible(_AccessibleName(ctrl, name))
+    if hasattr(ctrl, 'GetTextCtrl'):
+        tc = ctrl.GetTextCtrl()
+        if tc:
+            tc.SetAccessible(_AccessibleName(tc, name))
+
+
 class MainFrame(wx.Frame):
 
     def __init__(self):
@@ -87,8 +110,8 @@ class MainFrame(wx.Frame):
             panel,
             wildcard="LilyPond files (*.ly)|*.ly|All files (*.*)|*.*",
             style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-            name="LilyPond source file, dot ly extension",
         )
+        _label(self._ly_picker, "LilyPond score file")
         grid.Add(ly_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._ly_picker, 1, wx.EXPAND)
         grid.Add(wx.StaticText(panel, label="(sheet music source)"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -100,8 +123,8 @@ class MainFrame(wx.Frame):
             path=_default("soundfonts/GeneralUser-GS.sf2"),
             wildcard="Soundfont files (*.sf2)|*.sf2|All files (*.*)|*.*",
             style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-            name="SoundFont file, dot sf2 extension",
         )
+        _label(self._sf2_picker, "Soundfont file")
         grid.Add(sf_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._sf2_picker, 1, wx.EXPAND)
         grid.Add(wx.StaticText(panel, label="(instrument samples for audio)"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -110,11 +133,11 @@ class MainFrame(wx.Frame):
         ly_bin_lbl = wx.StaticText(panel, label="LilyPond binary:")
         self._lilypond_picker = wx.FilePickerCtrl(
             panel,
-            path=_default(""),  # not bundled — user must have it installed
+            path=_default(""),
             wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
             style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-            name="LilyPond executable path, leave blank to use PATH",
         )
+        _label(self._lilypond_picker, "LilyPond executable path")
         grid.Add(ly_bin_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._lilypond_picker, 1, wx.EXPAND)
         grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -126,8 +149,8 @@ class MainFrame(wx.Frame):
             path=_default("bin/ffmpeg.exe"),
             wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
             style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-            name="ffmpeg executable path",
         )
+        _label(self._ffmpeg_picker, "ffmpeg executable path")
         grid.Add(ffmpeg_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._ffmpeg_picker, 1, wx.EXPAND)
         grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -139,8 +162,8 @@ class MainFrame(wx.Frame):
             path=_default("bin/fluidsynth/fluidsynth.exe"),
             wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
             style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-            name="fluidsynth executable path",
         )
+        _label(self._fluidsynth_picker, "fluidsynth executable path")
         grid.Add(fs_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._fluidsynth_picker, 1, wx.EXPAND)
         grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -150,8 +173,8 @@ class MainFrame(wx.Frame):
         self._dir_picker = wx.DirPickerCtrl(
             panel,
             style=wx.DIRP_DEFAULT_STYLE | wx.DIRP_USE_TEXTCTRL,
-            name="Output folder for the encoded MP4",
         )
+        _label(self._dir_picker, "Output folder for the MP4")
         grid.Add(dir_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._dir_picker, 1, wx.EXPAND)
         grid.Add(wx.StaticText(panel, label="(where to save the MP4)"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -189,10 +212,9 @@ class MainFrame(wx.Frame):
         tempo_lbl = wx.StaticText(panel, label="Tempo multiplier:")
         self._tempo_ctrl = wx.SpinCtrlDouble(
             panel, min=0.25, max=4.0, initial=1.0, inc=0.05, size=(90, -1),
-            name="Tempo multiplier: 1.0 is original speed, 0.5 is half speed, 2.0 is double speed. "
-                 "Scales both scroll timing and audio playback rate.",
         )
         self._tempo_ctrl.SetDigits(2)
+        _label(self._tempo_ctrl, "Tempo multiplier")
         tempo_hint = wx.StaticText(panel, label="(1.0 = original speed)")
         grid.Add(tempo_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._tempo_ctrl)
