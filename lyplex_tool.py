@@ -18,7 +18,7 @@ from typing import Optional
 
 import mido
 from lxml import etree
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import cairosvg
 
 # ---------------------------------------------------------------------------
@@ -128,6 +128,105 @@ def patch_ly_audio_midi(source: str) -> str:
 
 def _has_unfold_repeats(source: str) -> bool:
     return bool(re.search(r"\\unfoldRepeats\b", source))
+
+# ---------------------------------------------------------------------------
+# Header extraction
+# ---------------------------------------------------------------------------
+
+def _extract_header(source: str) -> dict[str, str]:
+    """Parse \\header block for title, subtitle, composer, copyright, tagline."""
+    m = re.search(r'\\header\s*\{([^}]*)\}', source, re.DOTALL)
+    if not m:
+        return {}
+    block = m.group(1)
+    result: dict[str, str] = {}
+    for key in ('title', 'subtitle', 'composer', 'copyright', 'tagline'):
+        km = re.search(rf'{key}\s*=\s*"([^"]*)"', block)
+        if km:
+            result[key] = km.group(1)
+    return result
+
+# ---------------------------------------------------------------------------
+# Font helper
+# ---------------------------------------------------------------------------
+
+def _get_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for path in (
+        Path("C:/Windows/Fonts/arial.ttf"),
+        Path("C:/Windows/Fonts/segoeui.ttf"),
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+    ):
+        if path.exists():
+            try:
+                return ImageFont.truetype(str(path), size)
+            except Exception:
+                pass
+    return ImageFont.load_default(size=size)
+
+# ---------------------------------------------------------------------------
+# Title / footer fixed overlay
+# ---------------------------------------------------------------------------
+
+def build_title_footer_overlay(
+    width: int,
+    height: int,
+    header: dict[str, str],
+    show_title: bool,
+    show_footer: bool,
+) -> Image.Image | None:
+    """Return a fixed RGBA overlay image with title band (top) and/or footer band (bottom).
+    Returns None if nothing to draw."""
+    title_lines: list[tuple[str, str]] = []  # (kind, text)
+    footer_text = ""
+
+    if show_title:
+        if header.get('title'):
+            title_lines.append(('title', header['title']))
+        if header.get('subtitle'):
+            title_lines.append(('subtitle', header['subtitle']))
+        if header.get('composer'):
+            title_lines.append(('composer', header['composer']))
+
+    if show_footer:
+        footer_text = header.get('copyright') or header.get('tagline') or ""
+
+    if not title_lines and not footer_text:
+        return None
+
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    pad = max(6, height // 120)
+
+    if title_lines:
+        fonts = {
+            'title':    _get_font(max(16, height // 28)),
+            'subtitle': _get_font(max(12, height // 40)),
+            'composer': _get_font(max(12, height // 40)),
+        }
+        line_heights = [draw.textbbox((0, 0), text, font=fonts[kind])[3] for kind, text in title_lines]
+        band_h = sum(line_heights) + pad * (len(title_lines) + 1)
+        draw.rectangle([(0, 0), (width - 1, band_h)], fill=(0, 0, 0, 150))
+        y = pad
+        for kind, text in title_lines:
+            font = fonts[kind]
+            bb = draw.textbbox((0, 0), text, font=font)
+            tw = bb[2] - bb[0]
+            x = width - tw - pad * 2 if kind == 'composer' else (width - tw) // 2
+            draw.text((x, y), text, font=font, fill=(255, 255, 255, 230))
+            y += (bb[3] - bb[1]) + pad // 2
+
+    if footer_text:
+        font = _get_font(max(10, height // 52))
+        bb = draw.textbbox((0, 0), footer_text, font=font)
+        tw = bb[2] - bb[0]
+        th = bb[3] - bb[1]
+        band_h = th + pad * 2
+        draw.rectangle([(0, height - band_h), (width - 1, height - 1)], fill=(0, 0, 0, 150))
+        draw.text(((width - tw) // 2, height - band_h + pad), footer_text,
+                  font=font, fill=(255, 255, 255, 200))
+
+    return overlay
 
 # ---------------------------------------------------------------------------
 # LilyPond compile
@@ -485,6 +584,7 @@ def encode_mp4(
     ffmpeg_exe: str | None = None,
     cursor_line: bool = False,
     trail: bool = False,
+    title_footer_overlay: Image.Image | None = None,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
 
@@ -563,6 +663,9 @@ def encode_mp4(
                     draw = ImageDraw.Draw(frame)
                     draw.line([(cx, 0), (cx, height - 1)], fill=(220, 50, 50), width=2)
 
+            if title_footer_overlay is not None:
+                frame = Image.alpha_composite(frame.convert("RGBA"), title_footer_overlay).convert("RGB")
+
             frame.save(proc.stdin, format="PPM")
 
     finally:
@@ -589,6 +692,8 @@ def generate_mp4(
     fluidsynth_exe: str | None = None,
     cursor_line: bool = False,
     trail: bool = False,
+    overlay_title: bool = False,
+    overlay_footer: bool = False,
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -599,6 +704,7 @@ def generate_mp4(
     source = Path(ly_path).read_text(encoding="utf-8")
     _require_version_declaration(source, ly_path)
 
+    header = _extract_header(source)
     needs_audio_midi = _has_unfold_repeats(source)
 
     workdir = tempfile.mkdtemp(prefix="lyplex_")
@@ -652,6 +758,9 @@ def generate_mp4(
         print("[lyplex] rendering audio...")
         render_audio_wav(audio_midi_path, sf2_path, wav_path, fluidsynth_exe)
 
+        # Build fixed title/footer overlay (done once, composited every frame)
+        tf_overlay = build_title_footer_overlay(width, height, header, overlay_title, overlay_footer)
+
         # Encode
         print("[lyplex] encoding MP4...")
         encode_mp4(
@@ -662,6 +771,7 @@ def generate_mp4(
             ffmpeg_exe=ffmpeg_exe,
             cursor_line=cursor_line,
             trail=trail,
+            title_footer_overlay=tf_overlay,
         )
 
         print(f"[lyplex] done: {out_path}")

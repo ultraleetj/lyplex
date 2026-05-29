@@ -219,6 +219,26 @@ class MainFrame(wx.Frame):
         grid.Add(self._trail_chk)
         grid.AddSpacer(0)
 
+        # Title overlay
+        title_ov_lbl = wx.StaticText(panel, label="Title overlay:")
+        self._title_overlay_chk = wx.CheckBox(
+            panel, label="Show title / composer (fixed, does not scroll)",
+            name="Show title, subtitle, and composer as a fixed overlay band at the top of the video",
+        )
+        grid.Add(title_ov_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._title_overlay_chk)
+        grid.Add(wx.StaticText(panel, label="(from \\header in .ly)"), 0, wx.ALIGN_CENTER_VERTICAL)
+
+        # Footer overlay
+        footer_ov_lbl = wx.StaticText(panel, label="Footer overlay:")
+        self._footer_overlay_chk = wx.CheckBox(
+            panel, label="Show copyright / tagline (fixed, does not scroll)",
+            name="Show copyright or tagline as a fixed overlay band at the bottom of the video",
+        )
+        grid.Add(footer_ov_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._footer_overlay_chk)
+        grid.Add(wx.StaticText(panel, label="(from \\header in .ly)"), 0, wx.ALIGN_CENTER_VERTICAL)
+
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
         # Action buttons
@@ -347,6 +367,8 @@ class MainFrame(wx.Frame):
         tempo = self._tempo_ctrl.GetValue()
         cursor_line = self._cursor_chk.GetValue()
         trail = self._trail_chk.GetValue()
+        overlay_title = self._title_overlay_chk.GetValue()
+        overlay_footer = self._footer_overlay_chk.GetValue()
         lilypond_exe = self._lilypond_picker.GetPath() or None
         ffmpeg_exe = self._ffmpeg_picker.GetPath() or None
         fluidsynth_exe = self._fluidsynth_picker.GetPath() or None
@@ -361,13 +383,13 @@ class MainFrame(wx.Frame):
         threading.Thread(
             target=self._run_pipeline,
             args=(ly, sf2, out_mp4, width, height, fps, tempo, cursor_line, trail,
-                  lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
+                  overlay_title, overlay_footer, lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
             daemon=True,
         ).start()
 
     def _run_pipeline(
         self, ly, sf2, out_mp4, width, height, fps, tempo, cursor_line, trail,
-        lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
+        overlay_title, overlay_footer, lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
     ) -> None:
         old_out, old_err = sys.stdout, sys.stderr
         sys.stdout = stream
@@ -386,6 +408,8 @@ class MainFrame(wx.Frame):
                 fluidsynth_exe=fluidsynth_exe,
                 cursor_line=cursor_line,
                 trail=trail,
+                overlay_title=overlay_title,
+                overlay_footer=overlay_footer,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=out_mp4)
         except Exception as exc:
