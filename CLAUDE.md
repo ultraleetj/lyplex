@@ -315,6 +315,51 @@ Key files in `upstream/lilypond/` for implementation reference:
 
 ---
 
+## Metronome click track (planned, not implemented)
+
+Opt-in `metronome=False` param on `generate_mp4`. Synthesizes a WAV click track in Python and mixes it into the audio via ffmpeg. No new dependencies.
+
+**Beat positions:** parse timing MIDI (`ticks_per_beat`, tempo map) → enumerate beat ticks → convert to ms list. One beat every `ticks_per_beat` ticks.
+
+**Time signature:** read `time_signature` meta message from MIDI track 0 → numerator = beats per measure. Default 4/4 if absent.
+
+**Click synthesis (`render_click_wav`):**
+```python
+import wave, struct, math
+
+CLICK_SAMPLE_RATE = 44100
+CLICK_DURATION_S  = 0.02   # 20 ms burst
+CLICK_FREQ_HZ     = 1000   # beat 2/3/4
+ACCENT_FREQ_HZ    = 1500   # beat 1 (louder, higher)
+CLICK_AMPLITUDE   = 0.4    # 0..1, accent uses 0.6
+
+def render_click_wav(beat_ms_list, accented_indices, out_path):
+    n_samples_total = int((beat_ms_list[-1] / 1000.0 + 1.0) * CLICK_SAMPLE_RATE)
+    buf = [0.0] * n_samples_total
+    for i, ms in enumerate(beat_ms_list):
+        freq = ACCENT_FREQ_HZ if i in accented_indices else CLICK_FREQ_HZ
+        amp  = 0.6           if i in accented_indices else CLICK_AMPLITUDE
+        start = int(ms / 1000.0 * CLICK_SAMPLE_RATE)
+        n_click = int(CLICK_DURATION_S * CLICK_SAMPLE_RATE)
+        for k in range(n_click):
+            # half-sine envelope to avoid clicks
+            env = math.sin(math.pi * k / n_click)
+            buf[start + k] += amp * env * math.sin(2 * math.pi * freq * k / CLICK_SAMPLE_RATE)
+    with wave.open(str(out_path), 'w') as wf:
+        wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(CLICK_SAMPLE_RATE)
+        wf.writeframes(b''.join(struct.pack('<h', max(-32768, min(32767, int(s * 32767)))) for s in buf))
+```
+
+**Mix:** ffmpeg `-filter_complex "[0:a][1:a]amix=inputs=2:duration=first:weights=1 1"` mixes click WAV with instrument WAV before muxing into MP4. Click WAV path passed as second `-i` to existing ffmpeg mux call.
+
+**Scope of changes:**
+- `lyplex_tool.py`: add `render_click_wav(timing_midi_path, out_wav)` function; add `metronome: bool = False` to `generate_mp4`; update ffmpeg mux command to accept optional second audio input
+- `lyplex_gui.py`: one `CheckBox` "Add metronome click" in settings grid
+
+**Decision:** Option A (Python PCM synthesis) chosen over Option B (click MIDI → fluidsynth) because click quality is consistent regardless of SF2 content; no extra fluidsynth call; accent on beat 1 is trivial.
+
+---
+
 ## Design decisions (resolved)
 
 - **No `\version` in `.ly`:** abort with clear error — LilyPond always declares version; missing = broken file.
@@ -330,11 +375,15 @@ Key files in `upstream/lilypond/` for implementation reference:
 
 | File | Status |
 |------|--------|
-| `lyplex_tool.py` | Done — full pipeline implemented, CLI entry point working |
-| `lyplex_gui.py` | Done — wxPython single-window GUI, background thread, CR log handling |
+| `lyplex_tool.py` | Done — full pipeline, cursor line + trail overlay, CLI entry point |
+| `lyplex_gui.py` | Done — wxPython GUI, cursor/trail checkboxes, background thread, CR log |
 | `lyplex_web.py` | Not started (low priority) |
 
-**Next task:** `lyplex_web.py` — self-contained HTML scroll preview (low priority).
+**Overlay features (opt-in, both default off):**
+- `cursor_line=True` — 2px red vertical line at 45% viewport width each frame
+- `trail=True` — semi-transparent blue tint over played region + fading red dots at past TRAIL_DOTS notehead positions; dots use bisect for O(log n) per-frame lookup; tint overlay pre-built outside loop
+
+**Next task:** metronome audio (click track mixed into output WAV).
 
 ---
 
@@ -352,3 +401,4 @@ Key files in `upstream/lilypond/` for implementation reference:
 - [ ] Dynamics / hairpins: rendered by LilyPond, visible in SVG, no special handling
 - [x] SVG/MIDI mismatch (svg>midi): reconciled via closest-pair SVG merge (grace note case)
 - [ ] SVG/MIDI mismatch (svg<midi): currently warns + truncates; no fuzzy alignment yet
+- [ ] Metronome click track: mix synthesized clicks into audio at beat onsets (planned)
