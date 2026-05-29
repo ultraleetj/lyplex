@@ -184,12 +184,8 @@ def _accumulate_translate_x(element) -> float:
         node = node.getparent()
     return x_total
 
-def extract_svg_anchors(svg_path: Path) -> list[AnchorInfo]:
-    tree = etree.parse(str(svg_path))
-    root = tree.getroot()
-
+def _extract_anchors_from_root(root) -> list[AnchorInfo]:
     anchors: list[AnchorInfo] = []
-
     for a in root.iter(f"{{{SVG_NS}}}a"):
         href = a.get(f"{{{XLINK}}}href", "")
         if not href.startswith("textedit://"):
@@ -203,75 +199,65 @@ def extract_svg_anchors(svg_path: Path) -> list[AnchorInfo]:
             col = int(parts[2])
         except ValueError:
             continue
-
         x = _accumulate_translate_x(a)
         anchors.append(AnchorInfo(x=x, line=line, col=col))
-
     anchors.sort(key=lambda a: a.x)
     return anchors
+
+def extract_svg_anchors(svg_path: Path) -> list[AnchorInfo]:
+    return _extract_anchors_from_root(etree.parse(str(svg_path)).getroot())
 
 # ---------------------------------------------------------------------------
 # SVG coordinate conversion
 # ---------------------------------------------------------------------------
 
 def _parse_mm(value: str) -> float:
-    return float(value.rstrip("m").rstrip("m"))
+    return float(value.removesuffix("mm"))
 
-def svg_px_scale(svg_path: Path, output_height: int) -> tuple[float, float]:
+def _svg_scale_from_root(root, output_height: int) -> tuple[float, float]:
     """Returns (render_dpi, px_per_svgu)."""
-    tree = etree.parse(str(svg_path))
-    root = tree.getroot()
-
     svg_width_mm = _parse_mm(root.get("width", "0mm"))
     svg_height_mm = _parse_mm(root.get("height", "0mm"))
     vb = root.get("viewBox", "0 0 1 1").split()
     viewbox_width = float(vb[2])
-
     render_dpi = (output_height / svg_height_mm) * 25.4
     px_per_mm = render_dpi / 25.4
     px_per_svgu = svg_width_mm * px_per_mm / viewbox_width
-
     return render_dpi, px_per_svgu
+
+def svg_px_scale(svg_path: Path, output_height: int) -> tuple[float, float]:
+    """Returns (render_dpi, px_per_svgu)."""
+    return _svg_scale_from_root(etree.parse(str(svg_path)).getroot(), output_height)
 
 # ---------------------------------------------------------------------------
 # MIDI parsing
 # ---------------------------------------------------------------------------
 
-def _build_tempo_map(midi_file: mido.MidiFile) -> list[tuple[int, float]]:
-    """Returns [(tick, ms), ...] checkpoints."""
+def _build_tempo_map(midi_file: mido.MidiFile) -> list[tuple[int, float, int]]:
+    """Returns [(tick, ms, tempo_us), ...] checkpoints; tempo_us active from that tick onward."""
     tempo = 500000
-    checkpoints: list[tuple[int, float]] = [(0, 0.0)]
+    checkpoints: list[tuple[int, float, int]] = [(0, 0.0, tempo)]
     elapsed_ticks = 0
     elapsed_ms = 0.0
 
     for msg in mido.merge_tracks(midi_file.tracks):
+        elapsed_ms += mido.tick2second(msg.time, midi_file.ticks_per_beat, tempo) * 1000
         elapsed_ticks += msg.time
         if msg.type == "set_tempo":
-            elapsed_ms += mido.tick2second(msg.time, midi_file.ticks_per_beat, tempo) * 1000
             tempo = msg.tempo
-            checkpoints.append((elapsed_ticks, elapsed_ms))
+            checkpoints.append((elapsed_ticks, elapsed_ms, tempo))
 
     return checkpoints
 
-def _tick_to_ms(tick: int, tempo_map: list[tuple[int, float]], ticks_per_beat: int) -> float:
+def _tick_to_ms(tick: int, tempo_map: list[tuple[int, float, int]], ticks_per_beat: int) -> float:
     if not tempo_map:
         return 0.0
-    idx = bisect_left(tempo_map, (tick,)) - 1
-    idx = max(0, min(idx, len(tempo_map) - 1))
-    base_tick, base_ms = tempo_map[idx]
-
-    # find tempo at this segment
-    if idx + 1 < len(tempo_map):
-        next_tick, next_ms = tempo_map[idx + 1]
-        seg_ticks = next_tick - base_tick
-        seg_ms = next_ms - base_ms
-        tempo_us_per_beat = (seg_ms / seg_ticks * ticks_per_beat * 1000) if seg_ticks else 500000
-    else:
-        tempo_us_per_beat = 500000
-
-    delta_ticks = tick - base_tick
-    delta_ms = mido.tick2second(delta_ticks, ticks_per_beat, int(tempo_us_per_beat)) * 1000
-    return base_ms + delta_ms
+    base_tick, base_ms, tempo_us = tempo_map[0]
+    for cp_tick, cp_ms, cp_tempo in tempo_map:
+        if cp_tick > tick:
+            break
+        base_tick, base_ms, tempo_us = cp_tick, cp_ms, cp_tempo
+    return base_ms + mido.tick2second(tick - base_tick, ticks_per_beat, tempo_us) * 1000
 
 @dataclass
 class TrackNoteEvents:
@@ -308,10 +294,11 @@ def _parse_midi_tracks(midi_file: mido.MidiFile) -> list[TrackNoteEvents]:
 
     return results
 
-def extract_timing_midi(midi_path: Path) -> tuple[list[tuple[int, int]], list[tuple[int, float]], int]:
+def extract_timing_midi(midi_path: Path) -> tuple[list[tuple[int, int]], list[tuple[int, float, int]], int]:
     """
     Returns (note_ons, tempo_map, ticks_per_beat).
     note_ons: [(tick, pitch), ...] from the staff with longest total duration.
+    tempo_map: [(tick, ms, tempo_us), ...] checkpoints.
     """
     midi_file = mido.MidiFile(str(midi_path))
     tempo_map = _build_tempo_map(midi_file)
@@ -405,7 +392,12 @@ def build_timing_map(
 # Scroll interpolation
 # ---------------------------------------------------------------------------
 
-def scroll_offset_at(ms: float, timing_map: list[TimingEntry], viewport_width: int) -> float:
+def scroll_offset_at(
+    ms: float,
+    timing_map: list[TimingEntry],
+    viewport_width: int,
+    ms_keys: list[float] | None = None,
+) -> float:
     if not timing_map:
         return 0.0
     if ms <= timing_map[0].ms:
@@ -414,7 +406,8 @@ def scroll_offset_at(ms: float, timing_map: list[TimingEntry], viewport_width: i
         score_x = timing_map[-1].x
         return max(0.0, score_x - viewport_width * CURSOR_POSITION)
 
-    i = bisect_left([e.ms for e in timing_map], ms) - 1
+    keys = ms_keys if ms_keys is not None else [e.ms for e in timing_map]
+    i = bisect_left(keys, ms) - 1
     i = max(0, min(i, len(timing_map) - 2))
 
     t0, x0 = timing_map[i].ms, timing_map[i].x
@@ -489,7 +482,7 @@ def encode_mp4(
         "ffmpeg", "-y",
         "-framerate", str(fps),
         "-f", "image2pipe",
-        "-vcodec", "png",
+        "-vcodec", "ppm",
         "-i", "pipe:0",
         "-i", str(wav_path),
         "-c:v", "libx264",
@@ -502,10 +495,11 @@ def encode_mp4(
 
     proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
 
+    ms_keys = [e.ms for e in timing_map]
     try:
         for frame_n in range(n_frames):
             t_ms = frame_n / fps * 1000.0
-            offset_svgu = scroll_offset_at(t_ms, timing_map, width)
+            offset_svgu = scroll_offset_at(t_ms, timing_map, width, ms_keys)
             offset_px = int(offset_svgu * px_per_svgu)
 
             left = offset_px
@@ -522,7 +516,7 @@ def encode_mp4(
                 padded.paste(frame, (0, 0))
                 frame = padded
 
-            frame.save(proc.stdin, format="PNG")
+            frame.save(proc.stdin, format="PPM")
 
     finally:
         proc.stdin.close()
@@ -572,9 +566,11 @@ def generate_mp4(
         else:
             audio_midi_path = timing_midi_path
 
-        # Parse
+        # Parse SVG once — shared between anchor extraction and scale computation
+        svg_root = etree.parse(str(svg_path)).getroot()
+
         print("[lyplex] extracting SVG anchors...")
-        anchors = extract_svg_anchors(svg_path)
+        anchors = _extract_anchors_from_root(svg_root)
         if not anchors:
             raise RuntimeError("No note anchors found in SVG. Check \\pointAndClickTypes injection.")
 
@@ -591,7 +587,7 @@ def generate_mp4(
             timing_map = [TimingEntry(ms=e.ms / tempo_multiplier, x=e.x) for e in timing_map]
 
         # Scale
-        render_dpi, px_per_svgu = svg_px_scale(svg_path, height)
+        render_dpi, px_per_svgu = _svg_scale_from_root(svg_root, height)
 
         # Render strip
         strip_png = Path(workdir) / "strip.png"
