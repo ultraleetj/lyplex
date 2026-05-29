@@ -15,6 +15,13 @@ import wx
 
 from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, generate_mp4
 
+HERE = Path(__file__).parent
+
+def _default(rel: str) -> str:
+    """Return absolute path for a bundled file if it exists, else empty string."""
+    p = HERE / rel
+    return str(p) if p.exists() else ""
+
 
 # ---------------------------------------------------------------------------
 # Log stream — redirects print() to the log widget, handles \r progress lines
@@ -53,7 +60,7 @@ class _LogStream:
 class MainFrame(wx.Frame):
 
     def __init__(self):
-        super().__init__(None, title="LyPlex — Scrolling Sheet Music", size=(740, 680))
+        super().__init__(None, title="LyPlex — Scrolling Sheet Music", size=(740, 860))
         self._mp4_path: str | None = None
         self._html_path: str | None = None
         self._overwriting_log_line = False
@@ -91,12 +98,52 @@ class MainFrame(wx.Frame):
         sf_lbl = wx.StaticText(panel, label="Soundfont (.sf2):")
         self._sf2_picker = wx.FilePickerCtrl(
             panel,
+            path=_default("soundfonts/GeneralUser-GS.sf2"),
             wildcard="Soundfont files (*.sf2)|*.sf2|All files (*.*)|*.*",
             style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
             name="SoundFont file, dot sf2 extension",
         )
         grid.Add(sf_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._sf2_picker, 1, wx.EXPAND)
+        grid.AddSpacer(0)
+
+        # LilyPond binary — label before picker
+        ly_bin_lbl = wx.StaticText(panel, label="LilyPond binary:")
+        self._lilypond_picker = wx.FilePickerCtrl(
+            panel,
+            path=_default(""),  # not bundled — user must have it installed
+            wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
+            name="LilyPond executable path, leave blank to use PATH",
+        )
+        grid.Add(ly_bin_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._lilypond_picker, 1, wx.EXPAND)
+        grid.AddSpacer(0)
+
+        # ffmpeg binary — label before picker
+        ffmpeg_lbl = wx.StaticText(panel, label="ffmpeg binary:")
+        self._ffmpeg_picker = wx.FilePickerCtrl(
+            panel,
+            path=_default("bin/ffmpeg.exe"),
+            wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
+            name="ffmpeg executable path",
+        )
+        grid.Add(ffmpeg_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._ffmpeg_picker, 1, wx.EXPAND)
+        grid.AddSpacer(0)
+
+        # fluidsynth binary — label before picker
+        fs_lbl = wx.StaticText(panel, label="fluidsynth binary:")
+        self._fluidsynth_picker = wx.FilePickerCtrl(
+            panel,
+            path=_default("bin/fluidsynth/fluidsynth.exe"),
+            wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
+            name="fluidsynth executable path",
+        )
+        grid.Add(fs_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._fluidsynth_picker, 1, wx.EXPAND)
         grid.AddSpacer(0)
 
         # Output folder — label before picker
@@ -278,6 +325,9 @@ class MainFrame(wx.Frame):
 
         fps = self._fps_ctrl.GetValue()
         tempo = self._tempo_ctrl.GetValue()
+        lilypond_exe = self._lilypond_picker.GetPath() or None
+        ffmpeg_exe = self._ffmpeg_picker.GetPath() or None
+        fluidsynth_exe = self._fluidsynth_picker.GetPath() or None
 
         self._log.Clear()
         self._overwriting_log_line = False
@@ -288,12 +338,14 @@ class MainFrame(wx.Frame):
         stream = _LogStream(self._log_newline, self._log_overwrite)
         threading.Thread(
             target=self._run_pipeline,
-            args=(ly, sf2, out_mp4, width, height, fps, tempo, stream),
+            args=(ly, sf2, out_mp4, width, height, fps, tempo,
+                  lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
             daemon=True,
         ).start()
 
     def _run_pipeline(
-        self, ly, sf2, out_mp4, width, height, fps, tempo, stream
+        self, ly, sf2, out_mp4, width, height, fps, tempo,
+        lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
     ) -> None:
         old_out, old_err = sys.stdout, sys.stderr
         sys.stdout = stream
@@ -307,6 +359,9 @@ class MainFrame(wx.Frame):
                 height=height,
                 fps=fps,
                 tempo_multiplier=tempo,
+                lilypond_exe=lilypond_exe,
+                ffmpeg_exe=ffmpeg_exe,
+                fluidsynth_exe=fluidsynth_exe,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=out_mp4)
         except Exception as exc:
