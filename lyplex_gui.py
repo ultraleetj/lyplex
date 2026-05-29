@@ -67,7 +67,6 @@ class MainFrame(wx.Frame):
         self._build_ui()
         self.CreateStatusBar()
         self.SetStatusText("Ready.")
-        self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
         self.Centre()
         self.Show()
 
@@ -278,39 +277,6 @@ class MainFrame(wx.Frame):
         self._btn_mp4.Bind(wx.EVT_BUTTON, self._on_encode_mp4)
         self._btn_open_html.Bind(wx.EVT_BUTTON, self._on_open_html)
         self._btn_explorer.Bind(wx.EVT_BUTTON, self._on_show_explorer)
-
-    # ------------------------------------------------------------------
-    # Tab order — cycle through focusable controls in creation order;
-    # wrap at panel boundary so keyboard users never get trapped.
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _focusable(parent) -> list:
-        result = []
-        for child in parent.GetChildren():
-            if child.IsShownOnScreen() and child.IsEnabled() and child.AcceptsFocus():
-                result.append(child)
-            result.extend(MainFrame._focusable(child))
-        return result
-
-    def _on_char_hook(self, event) -> None:
-        if event.GetKeyCode() != wx.WXK_TAB:
-            event.Skip()
-            return
-        panel = self.GetChildren()[0]  # the single wx.Panel
-        focused = wx.Window.FindFocus()
-        controls = self._focusable(panel)
-        if not controls or focused not in controls:
-            event.Skip()
-            return
-        shift = event.ShiftDown()
-        if not shift and focused is controls[-1]:
-            controls[0].SetFocus()
-            return
-        if shift and focused is controls[0]:
-            controls[-1].SetFocus()
-            return
-        event.Skip()
 
     # ------------------------------------------------------------------
     # Log helpers
