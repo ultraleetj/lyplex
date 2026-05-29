@@ -87,10 +87,15 @@ class MainFrame(wx.Frame):
         grid = wx.FlexGridSizer(cols=3, hgap=6, vgap=8)
         grid.AddGrowableCol(1, 1)
 
-        # --- helpers (closures over panel/self) ---
+        # --- helpers (closures over panel/grid/self) ---
+        # Each helper creates the StaticText label FIRST so it precedes
+        # the TextCtrl in HWND z-order — MSAA scans backward for the
+        # nearest preceding Static to use as the accessible name.
 
-        def file_row(wildcard: str, default: str = "") -> tuple[wx.BoxSizer, wx.TextCtrl]:
-            tc = wx.TextCtrl(panel, value=default)
+        def file_row(label: str, wildcard: str,
+                     default: str = "", hint: str = "") -> wx.TextCtrl:
+            lbl = wx.StaticText(panel, label=label)   # FIRST — MSAA anchor
+            tc  = wx.TextCtrl(panel, value=default)   # SECOND
             btn = wx.Button(panel, label="Browse…", size=(70, -1))
             def on_browse(_e, _tc=tc, _wc=wildcard):
                 dlg = wx.FileDialog(self, wildcard=_wc,
@@ -102,10 +107,14 @@ class MainFrame(wx.Frame):
             sz = wx.BoxSizer(wx.HORIZONTAL)
             sz.Add(tc, 1, wx.EXPAND)
             sz.Add(btn, 0, wx.LEFT, 4)
-            return sz, tc
+            grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(sz,  1, wx.EXPAND)
+            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
+            return tc
 
-        def dir_row() -> tuple[wx.BoxSizer, wx.TextCtrl]:
-            tc = wx.TextCtrl(panel)
+        def dir_row(label: str, hint: str = "") -> wx.TextCtrl:
+            lbl = wx.StaticText(panel, label=label)
+            tc  = wx.TextCtrl(panel)
             btn = wx.Button(panel, label="Browse…", size=(70, -1))
             def on_browse(_e, _tc=tc):
                 dlg = wx.DirDialog(self)
@@ -116,113 +125,119 @@ class MainFrame(wx.Frame):
             sz = wx.BoxSizer(wx.HORIZONTAL)
             sz.Add(tc, 1, wx.EXPAND)
             sz.Add(btn, 0, wx.LEFT, 4)
-            return sz, tc
+            grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(sz,  1, wx.EXPAND)
+            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
+            return tc
 
-        def spin_double_row(min_v: float, max_v: float, initial: float,
-                            inc: float, digits: int) -> tuple[wx.BoxSizer, wx.TextCtrl]:
-            tc = wx.TextCtrl(panel, value=f"{initial:.{digits}f}", size=(80, -1))
-            sp = wx.SpinButton(panel, style=wx.SP_VERTICAL)
+        def spin_double_row(label: str, min_v: float, max_v: float,
+                            initial: float, inc: float, digits: int,
+                            hint: str = "") -> wx.TextCtrl:
+            lbl = wx.StaticText(panel, label=label)
+            tc  = wx.TextCtrl(panel, value=f"{initial:.{digits}f}", size=(80, -1))
+            sp  = wx.SpinButton(panel, style=wx.SP_VERTICAL)
             sp.SetRange(-32768, 32767)
             sp.SetValue(0)
-            def adjust(delta: float, _tc=tc, _min=min_v, _max=max_v,
-                       _inc=inc, _d=digits, _sp=sp) -> None:
+            def adjust(delta: float) -> None:
                 try:
-                    val = float(_tc.GetValue())
+                    val = float(tc.GetValue())
                 except ValueError:
                     val = initial
-                val = max(_min, min(_max, round(val + delta, _d)))
-                _tc.SetValue(f"{val:.{_d}f}")
-                _sp.SetValue(0)
+                val = max(min_v, min(max_v, round(val + delta, digits)))
+                tc.SetValue(f"{val:.{digits}f}")
+                sp.SetValue(0)
             sp.Bind(wx.EVT_SPIN_UP,   lambda e: adjust(+inc))
             sp.Bind(wx.EVT_SPIN_DOWN, lambda e: adjust(-inc))
-            def on_kill_focus(_e, _tc=tc, _min=min_v, _max=max_v, _d=digits):
+            def on_kill_focus(_e):
                 try:
-                    val = max(_min, min(_max, float(_tc.GetValue())))
-                    _tc.SetValue(f"{val:.{_d}f}")
+                    val = max(min_v, min(max_v, float(tc.GetValue())))
+                    tc.SetValue(f"{val:.{digits}f}")
                 except ValueError:
-                    _tc.SetValue(f"{initial:.{_d}f}")
+                    tc.SetValue(f"{initial:.{digits}f}")
                 _e.Skip()
             tc.Bind(wx.EVT_KILL_FOCUS, on_kill_focus)
             sz = wx.BoxSizer(wx.HORIZONTAL)
             sz.Add(tc, 0)
             sz.Add(sp, 0)
-            return sz, tc
+            grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(sz,  0)
+            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
+            return tc
 
-        def add_row(label: str, ctrl_sizer, hint: str = "") -> None:
+        def chk_row(label: str, chk_label: str, hint: str = "") -> wx.CheckBox:
             grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            if isinstance(ctrl_sizer, wx.Sizer):
-                grid.Add(ctrl_sizer, 1, wx.EXPAND)
-            else:
-                grid.Add(ctrl_sizer, 1)
-            if hint:
-                grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL)
-            else:
-                grid.AddSpacer(0)
+            chk = wx.CheckBox(panel, label=chk_label)
+            grid.Add(chk, 0)
+            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
+            return chk
 
         # --- file / folder rows ---
 
-        ly_sz, self._ly_tc = file_row(
-            "LilyPond files (*.ly)|*.ly|All files (*.*)|*.*")
-        add_row("LilyPond score (.ly):", ly_sz, "(sheet music source)")
+        self._ly_tc = file_row(
+            "LilyPond score (.ly):",
+            "LilyPond files (*.ly)|*.ly|All files (*.*)|*.*",
+            hint="(sheet music source)")
 
-        sf_sz, self._sf2_tc = file_row(
+        self._sf2_tc = file_row(
+            "Soundfont (.sf2):",
             "Soundfont files (*.sf2)|*.sf2|All files (*.*)|*.*",
-            _default("soundfonts/GeneralUser-GS.sf2"))
-        add_row("Soundfont (.sf2):", sf_sz, "(instrument samples for audio)")
+            _default("soundfonts/GeneralUser-GS.sf2"),
+            hint="(instrument samples for audio)")
 
-        lp_sz, self._lilypond_tc = file_row(
-            "Executables (*.exe)|*.exe|All files (*.*)|*.*")
-        add_row("LilyPond binary:", lp_sz, "ffmpeg binary")
-
-        ff_sz, self._ffmpeg_tc = file_row(
+        self._lilypond_tc = file_row(
+            "LilyPond binary:",
             "Executables (*.exe)|*.exe|All files (*.*)|*.*",
-            _default("bin/ffmpeg.exe"))
-        add_row("ffmpeg binary:", ff_sz, "fluidsynth binary")
+            hint="(blank = use system PATH)")
 
-        fs_sz, self._fluidsynth_tc = file_row(
+        self._ffmpeg_tc = file_row(
+            "ffmpeg binary:",
             "Executables (*.exe)|*.exe|All files (*.*)|*.*",
-            _default("bin/fluidsynth/fluidsynth.exe"))
-        add_row("fluidsynth binary:", fs_sz, "Output folder")
+            _default("bin/ffmpeg.exe"),
+            hint="(blank = use system PATH)")
 
-        dir_sz, self._dir_tc = dir_row()
-        add_row("Output folder:", dir_sz, "Video width")
+        self._fluidsynth_tc = file_row(
+            "fluidsynth binary:",
+            "Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            _default("bin/fluidsynth/fluidsynth.exe"),
+            hint="(blank = use system PATH)")
+
+        self._dir_tc = dir_row(
+            "Output folder:",
+            hint="(where to save the MP4)")
 
         # --- numeric rows ---
 
-        self._width_ctrl = wx.SpinCtrl(
-            panel, min=320, max=7680, initial=DEFAULT_WIDTH, size=(90, -1))
-        self._height_ctrl = wx.SpinCtrl(
-            panel, min=240, max=4320, initial=DEFAULT_HEIGHT, size=(90, -1))
+        grid.Add(wx.StaticText(panel, label="Resolution (W × H):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._width_ctrl = wx.SpinCtrl(panel, min=320, max=7680, initial=DEFAULT_WIDTH, size=(90, -1))
+        self._height_ctrl = wx.SpinCtrl(panel, min=240, max=4320, initial=DEFAULT_HEIGHT, size=(90, -1))
         res_box = wx.BoxSizer(wx.HORIZONTAL)
         res_box.Add(self._width_ctrl)
         res_box.Add(wx.StaticText(panel, label=" × "), 0, wx.ALIGN_CENTER_VERTICAL)
         res_box.Add(self._height_ctrl)
-        add_row("Resolution (W × H):", res_box)
+        grid.Add(res_box)
+        grid.AddSpacer(0)
 
-        self._fps_ctrl = wx.SpinCtrl(
-            panel, min=15, max=60, initial=DEFAULT_FPS, size=(90, -1))
-        add_row("Frame rate (fps):", self._fps_ctrl)
+        grid.Add(wx.StaticText(panel, label="Frame rate (fps):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._fps_ctrl = wx.SpinCtrl(panel, min=15, max=60, initial=DEFAULT_FPS, size=(90, -1))
+        grid.Add(self._fps_ctrl)
+        grid.AddSpacer(0)
 
-        tempo_sz, self._tempo_tc = spin_double_row(0.25, 4.0, 1.0, 0.05, 2)
-        add_row("Tempo multiplier:", tempo_sz, "(1.0 = original speed)")
+        self._tempo_tc = spin_double_row(
+            "Tempo multiplier:", 0.25, 4.0, 1.0, 0.05, 2,
+            hint="(1.0 = original speed)")
 
         # --- overlay / option checkboxes ---
 
-        self._cursor_chk = wx.CheckBox(
-            panel, label="Show vertical cursor line")
-        add_row("Playback cursor:", self._cursor_chk)
-
-        self._trail_chk = wx.CheckBox(
-            panel, label="Show fading dot trail + played-region tint")
-        add_row("Note trail:", self._trail_chk)
-
-        self._title_overlay_chk = wx.CheckBox(
-            panel, label="Show title / composer (fixed, does not scroll)")
-        add_row("Title overlay:", self._title_overlay_chk, r"(from \header in .ly)")
-
-        self._footer_overlay_chk = wx.CheckBox(
-            panel, label="Show copyright / tagline (fixed, does not scroll)")
-        add_row("Footer overlay:", self._footer_overlay_chk, r"(from \header in .ly)")
+        self._cursor_chk = chk_row(
+            "Playback cursor:", "Show vertical cursor line")
+        self._trail_chk = chk_row(
+            "Note trail:", "Show fading dot trail + played-region tint")
+        self._title_overlay_chk = chk_row(
+            "Title overlay:", "Show title / composer (fixed, does not scroll)",
+            hint=r"(from \header in .ly)")
+        self._footer_overlay_chk = chk_row(
+            "Footer overlay:", "Show copyright / tagline (fixed, does not scroll)",
+            hint=r"(from \header in .ly)")
 
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
