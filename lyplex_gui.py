@@ -57,33 +57,10 @@ class _LogStream:
 # Main window
 # ---------------------------------------------------------------------------
 
-class _AccessibleName(wx.Accessible):
-    """Supplies an explicit accessible name for composite controls whose
-    sub-windows don't inherit the UIA LabeledBy from the parent panel."""
-
-    def __init__(self, window: wx.Window, name: str) -> None:
-        super().__init__(window)
-        self._name = name
-
-    def GetName(self, child_id: int) -> tuple:
-        if child_id == 0:
-            return wx.ACC_OK, self._name
-        return wx.ACC_NOT_IMPLEMENTED, ""
-
-
-def _label(ctrl: wx.Window, name: str) -> None:
-    """Set accessible name on ctrl; also on its internal TextCtrl if present."""
-    ctrl.SetAccessible(_AccessibleName(ctrl, name))
-    if hasattr(ctrl, 'GetTextCtrl'):
-        tc = ctrl.GetTextCtrl()
-        if tc:
-            tc.SetAccessible(_AccessibleName(tc, name))
-
-
 class MainFrame(wx.Frame):
 
     def __init__(self):
-        super().__init__(None, title="LyPlex — Scrolling Sheet Music", size=(740, 860))
+        super().__init__(None, title="LyPlex — Scrolling Sheet Music", size=(740, 900))
         self._mp4_path: str | None = None
         self._html_path: str | None = None
         self._overwriting_log_line = False
@@ -94,7 +71,13 @@ class MainFrame(wx.Frame):
         self.Show()
 
     # ------------------------------------------------------------------
-    # UI — labels always created before their controls (UIA LabeledBy z-order)
+    # UI construction
+    # Labels created before controls so MSAA finds the preceding Static
+    # as the accessible name for each native HWND control.
+    # All file/dir pickers are plain TextCtrl + Button so the TextCtrl
+    # is a direct panel child — composite controls (FilePickerCtrl,
+    # DirPickerCtrl, SpinCtrlDouble) bury their inner HWND one level
+    # deeper, which breaks MSAA sibling-label detection.
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
@@ -104,161 +87,142 @@ class MainFrame(wx.Frame):
         grid = wx.FlexGridSizer(cols=3, hgap=6, vgap=8)
         grid.AddGrowableCol(1, 1)
 
-        # LilyPond file — label before picker
-        ly_lbl = wx.StaticText(panel, label="LilyPond score (.ly):")
-        self._ly_picker = wx.FilePickerCtrl(
-            panel,
-            wildcard="LilyPond files (*.ly)|*.ly|All files (*.*)|*.*",
-            style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-        )
-        _label(self._ly_picker, "LilyPond score file")
-        grid.Add(ly_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._ly_picker, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(panel, label="(sheet music source)"), 0, wx.ALIGN_CENTER_VERTICAL)
+        # --- helpers (closures over panel/self) ---
 
-        # Soundfont — label before picker
-        sf_lbl = wx.StaticText(panel, label="Soundfont (.sf2):")
-        self._sf2_picker = wx.FilePickerCtrl(
-            panel,
-            path=_default("soundfonts/GeneralUser-GS.sf2"),
-            wildcard="Soundfont files (*.sf2)|*.sf2|All files (*.*)|*.*",
-            style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-        )
-        _label(self._sf2_picker, "Soundfont file")
-        grid.Add(sf_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._sf2_picker, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(panel, label="(instrument samples for audio)"), 0, wx.ALIGN_CENTER_VERTICAL)
+        def file_row(wildcard: str, default: str = "") -> tuple[wx.BoxSizer, wx.TextCtrl]:
+            tc = wx.TextCtrl(panel, value=default)
+            btn = wx.Button(panel, label="Browse…", size=(70, -1))
+            def on_browse(_e, _tc=tc, _wc=wildcard):
+                dlg = wx.FileDialog(self, wildcard=_wc,
+                                    style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+                if dlg.ShowModal() == wx.ID_OK:
+                    _tc.SetValue(dlg.GetPath())
+                dlg.Destroy()
+            btn.Bind(wx.EVT_BUTTON, on_browse)
+            sz = wx.BoxSizer(wx.HORIZONTAL)
+            sz.Add(tc, 1, wx.EXPAND)
+            sz.Add(btn, 0, wx.LEFT, 4)
+            return sz, tc
 
-        # LilyPond binary — label before picker
-        ly_bin_lbl = wx.StaticText(panel, label="LilyPond binary:")
-        self._lilypond_picker = wx.FilePickerCtrl(
-            panel,
-            path=_default(""),
-            wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
-            style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-        )
-        _label(self._lilypond_picker, "LilyPond executable path")
-        grid.Add(ly_bin_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._lilypond_picker, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
+        def dir_row() -> tuple[wx.BoxSizer, wx.TextCtrl]:
+            tc = wx.TextCtrl(panel)
+            btn = wx.Button(panel, label="Browse…", size=(70, -1))
+            def on_browse(_e, _tc=tc):
+                dlg = wx.DirDialog(self)
+                if dlg.ShowModal() == wx.ID_OK:
+                    _tc.SetValue(dlg.GetPath())
+                dlg.Destroy()
+            btn.Bind(wx.EVT_BUTTON, on_browse)
+            sz = wx.BoxSizer(wx.HORIZONTAL)
+            sz.Add(tc, 1, wx.EXPAND)
+            sz.Add(btn, 0, wx.LEFT, 4)
+            return sz, tc
 
-        # ffmpeg binary — label before picker
-        ffmpeg_lbl = wx.StaticText(panel, label="ffmpeg binary:")
-        self._ffmpeg_picker = wx.FilePickerCtrl(
-            panel,
-            path=_default("bin/ffmpeg.exe"),
-            wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
-            style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-        )
-        _label(self._ffmpeg_picker, "ffmpeg executable path")
-        grid.Add(ffmpeg_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._ffmpeg_picker, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
+        def spin_double_row(min_v: float, max_v: float, initial: float,
+                            inc: float, digits: int) -> tuple[wx.BoxSizer, wx.TextCtrl]:
+            tc = wx.TextCtrl(panel, value=f"{initial:.{digits}f}", size=(80, -1))
+            sp = wx.SpinButton(panel, style=wx.SP_VERTICAL)
+            sp.SetRange(-32768, 32767)
+            sp.SetValue(0)
+            def adjust(delta: float, _tc=tc, _min=min_v, _max=max_v,
+                       _inc=inc, _d=digits, _sp=sp) -> None:
+                try:
+                    val = float(_tc.GetValue())
+                except ValueError:
+                    val = initial
+                val = max(_min, min(_max, round(val + delta, _d)))
+                _tc.SetValue(f"{val:.{_d}f}")
+                _sp.SetValue(0)
+            sp.Bind(wx.EVT_SPIN_UP,   lambda e: adjust(+inc))
+            sp.Bind(wx.EVT_SPIN_DOWN, lambda e: adjust(-inc))
+            def on_kill_focus(_e, _tc=tc, _min=min_v, _max=max_v, _d=digits):
+                try:
+                    val = max(_min, min(_max, float(_tc.GetValue())))
+                    _tc.SetValue(f"{val:.{_d}f}")
+                except ValueError:
+                    _tc.SetValue(f"{initial:.{_d}f}")
+                _e.Skip()
+            tc.Bind(wx.EVT_KILL_FOCUS, on_kill_focus)
+            sz = wx.BoxSizer(wx.HORIZONTAL)
+            sz.Add(tc, 0)
+            sz.Add(sp, 0)
+            return sz, tc
 
-        # fluidsynth binary — label before picker
-        fs_lbl = wx.StaticText(panel, label="fluidsynth binary:")
-        self._fluidsynth_picker = wx.FilePickerCtrl(
-            panel,
-            path=_default("bin/fluidsynth/fluidsynth.exe"),
-            wildcard="Executables (*.exe)|*.exe|All files (*.*)|*.*",
-            style=wx.FLP_DEFAULT_STYLE | wx.FLP_USE_TEXTCTRL,
-        )
-        _label(self._fluidsynth_picker, "fluidsynth executable path")
-        grid.Add(fs_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._fluidsynth_picker, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
+        def add_row(label: str, ctrl_sizer, hint: str = "") -> None:
+            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            if isinstance(ctrl_sizer, wx.Sizer):
+                grid.Add(ctrl_sizer, 1, wx.EXPAND)
+            else:
+                grid.Add(ctrl_sizer, 1)
+            if hint:
+                grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL)
+            else:
+                grid.AddSpacer(0)
 
-        # Output folder — label before picker
-        dir_lbl = wx.StaticText(panel, label="Output folder:")
-        self._dir_picker = wx.DirPickerCtrl(
-            panel,
-            style=wx.DIRP_DEFAULT_STYLE | wx.DIRP_USE_TEXTCTRL,
-        )
-        _label(self._dir_picker, "Output folder for the MP4")
-        grid.Add(dir_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._dir_picker, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(panel, label="(where to save the MP4)"), 0, wx.ALIGN_CENTER_VERTICAL)
+        # --- file / folder rows ---
 
-        # Resolution — label before spinners
-        res_lbl = wx.StaticText(panel, label="Resolution (W × H):")
+        ly_sz, self._ly_tc = file_row(
+            "LilyPond files (*.ly)|*.ly|All files (*.*)|*.*")
+        add_row("LilyPond score (.ly):", ly_sz, "(sheet music source)")
+
+        sf_sz, self._sf2_tc = file_row(
+            "Soundfont files (*.sf2)|*.sf2|All files (*.*)|*.*",
+            _default("soundfonts/GeneralUser-GS.sf2"))
+        add_row("Soundfont (.sf2):", sf_sz, "(instrument samples for audio)")
+
+        lp_sz, self._lilypond_tc = file_row(
+            "Executables (*.exe)|*.exe|All files (*.*)|*.*")
+        add_row("LilyPond binary:", lp_sz, "(blank = use system PATH)")
+
+        ff_sz, self._ffmpeg_tc = file_row(
+            "Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            _default("bin/ffmpeg.exe"))
+        add_row("ffmpeg binary:", ff_sz, "(blank = use system PATH)")
+
+        fs_sz, self._fluidsynth_tc = file_row(
+            "Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            _default("bin/fluidsynth/fluidsynth.exe"))
+        add_row("fluidsynth binary:", fs_sz, "(blank = use system PATH)")
+
+        dir_sz, self._dir_tc = dir_row()
+        add_row("Output folder:", dir_sz, "(where to save the MP4)")
+
+        # --- numeric rows ---
+
         self._width_ctrl = wx.SpinCtrl(
-            panel, min=320, max=7680, initial=DEFAULT_WIDTH, size=(90, -1),
-            name="Output width in pixels, must be an even number",
-        )
+            panel, min=320, max=7680, initial=DEFAULT_WIDTH, size=(90, -1))
         self._height_ctrl = wx.SpinCtrl(
-            panel, min=240, max=4320, initial=DEFAULT_HEIGHT, size=(90, -1),
-            name="Output height in pixels, must be an even number",
-        )
+            panel, min=240, max=4320, initial=DEFAULT_HEIGHT, size=(90, -1))
         res_box = wx.BoxSizer(wx.HORIZONTAL)
         res_box.Add(self._width_ctrl)
-        # StaticText separator is presentational — no name needed
         res_box.Add(wx.StaticText(panel, label=" × "), 0, wx.ALIGN_CENTER_VERTICAL)
         res_box.Add(self._height_ctrl)
-        grid.Add(res_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(res_box)
-        grid.AddSpacer(0)
+        add_row("Resolution (W × H):", res_box)
 
-        # FPS — label before spinner
-        fps_lbl = wx.StaticText(panel, label="Frame rate (fps):")
         self._fps_ctrl = wx.SpinCtrl(
-            panel, min=15, max=60, initial=DEFAULT_FPS, size=(90, -1),
-            name="Frame rate in frames per second",
-        )
-        grid.Add(fps_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._fps_ctrl)
-        grid.AddSpacer(0)
+            panel, min=15, max=60, initial=DEFAULT_FPS, size=(90, -1))
+        add_row("Frame rate (fps):", self._fps_ctrl)
 
-        # Tempo multiplier — label before spinner
-        tempo_lbl = wx.StaticText(panel, label="Tempo multiplier:")
-        self._tempo_ctrl = wx.SpinCtrlDouble(
-            panel, min=0.25, max=4.0, initial=1.0, inc=0.05, size=(90, -1),
-        )
-        self._tempo_ctrl.SetDigits(2)
-        _label(self._tempo_ctrl, "Tempo multiplier")
-        tempo_hint = wx.StaticText(panel, label="(1.0 = original speed)")
-        grid.Add(tempo_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._tempo_ctrl)
-        grid.Add(tempo_hint, 0, wx.ALIGN_CENTER_VERTICAL)
+        tempo_sz, self._tempo_tc = spin_double_row(0.25, 4.0, 1.0, 0.05, 2)
+        add_row("Tempo multiplier:", tempo_sz, "(1.0 = original speed)")
 
-        # Cursor line option
-        cursor_lbl = wx.StaticText(panel, label="Playback cursor:")
+        # --- overlay / option checkboxes ---
+
         self._cursor_chk = wx.CheckBox(
-            panel, label="Show vertical cursor line",
-            name="Show a vertical cursor line on the video at the current playback position",
-        )
-        grid.Add(cursor_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._cursor_chk)
-        grid.AddSpacer(0)
+            panel, label="Show vertical cursor line")
+        add_row("Playback cursor:", self._cursor_chk)
 
-        # Trail option
-        trail_lbl = wx.StaticText(panel, label="Note trail:")
         self._trail_chk = wx.CheckBox(
-            panel, label="Show fading dot trail + played-region tint",
-            name="Overlay fading dots at past notehead positions and a color tint over the played region",
-        )
-        grid.Add(trail_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._trail_chk)
-        grid.AddSpacer(0)
+            panel, label="Show fading dot trail + played-region tint")
+        add_row("Note trail:", self._trail_chk)
 
-        # Title overlay
-        title_ov_lbl = wx.StaticText(panel, label="Title overlay:")
         self._title_overlay_chk = wx.CheckBox(
-            panel, label="Show title / composer (fixed, does not scroll)",
-            name="Show title, subtitle, and composer as a fixed overlay band at the top of the video",
-        )
-        grid.Add(title_ov_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._title_overlay_chk)
-        grid.Add(wx.StaticText(panel, label="(from \\header in .ly)"), 0, wx.ALIGN_CENTER_VERTICAL)
+            panel, label="Show title / composer (fixed, does not scroll)")
+        add_row("Title overlay:", self._title_overlay_chk, r"(from \header in .ly)")
 
-        # Footer overlay
-        footer_ov_lbl = wx.StaticText(panel, label="Footer overlay:")
         self._footer_overlay_chk = wx.CheckBox(
-            panel, label="Show copyright / tagline (fixed, does not scroll)",
-            name="Show copyright or tagline as a fixed overlay band at the bottom of the video",
-        )
-        grid.Add(footer_ov_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._footer_overlay_chk)
-        grid.Add(wx.StaticText(panel, label="(from \\header in .ly)"), 0, wx.ALIGN_CENTER_VERTICAL)
+            panel, label="Show copyright / tagline (fixed, does not scroll)")
+        add_row("Footer overlay:", self._footer_overlay_chk, r"(from \header in .ly)")
 
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
@@ -272,7 +236,7 @@ class MainFrame(wx.Frame):
         btn_box.Add(self._btn_html)
         root.Add(btn_box, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
-        # Log — label before text ctrl
+        # Log
         root.Add(wx.StaticText(panel, label="Log:"), 0, wx.LEFT, 10)
         self._log = wx.TextCtrl(
             panel,
@@ -325,9 +289,9 @@ class MainFrame(wx.Frame):
     # ------------------------------------------------------------------
 
     def _on_encode_mp4(self, _event) -> None:
-        ly = self._ly_picker.GetPath()
-        sf2 = self._sf2_picker.GetPath()
-        out_dir = self._dir_picker.GetPath()
+        ly = self._ly_tc.GetValue().strip()
+        sf2 = self._sf2_tc.GetValue().strip()
+        out_dir = self._dir_tc.GetValue().strip()
 
         if not ly or not Path(ly).is_file():
             wx.MessageBox("Select a valid .ly file.", "Input required", wx.ICON_WARNING)
@@ -348,18 +312,22 @@ class MainFrame(wx.Frame):
             )
             return
 
+        try:
+            tempo = float(self._tempo_tc.GetValue())
+        except ValueError:
+            tempo = 1.0
+
         out_mp4 = str(Path(out_dir) / f"{Path(ly).stem}.mp4")
         self._mp4_path = out_mp4
 
         fps = self._fps_ctrl.GetValue()
-        tempo = self._tempo_ctrl.GetValue()
         cursor_line = self._cursor_chk.GetValue()
         trail = self._trail_chk.GetValue()
         overlay_title = self._title_overlay_chk.GetValue()
         overlay_footer = self._footer_overlay_chk.GetValue()
-        lilypond_exe = self._lilypond_picker.GetPath() or None
-        ffmpeg_exe = self._ffmpeg_picker.GetPath() or None
-        fluidsynth_exe = self._fluidsynth_picker.GetPath() or None
+        lilypond_exe = self._lilypond_tc.GetValue().strip() or None
+        ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
+        fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
 
         self._log.Clear()
         self._overwriting_log_line = False
