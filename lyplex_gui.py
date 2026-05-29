@@ -199,6 +199,26 @@ class MainFrame(wx.Frame):
         grid.Add(self._tempo_ctrl)
         grid.Add(tempo_hint, 0, wx.ALIGN_CENTER_VERTICAL)
 
+        # Cursor line option
+        cursor_lbl = wx.StaticText(panel, label="Playback cursor:")
+        self._cursor_chk = wx.CheckBox(
+            panel, label="Show vertical cursor line",
+            name="Show a vertical cursor line on the video at the current playback position",
+        )
+        grid.Add(cursor_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._cursor_chk)
+        grid.AddSpacer(0)
+
+        # Trail option
+        trail_lbl = wx.StaticText(panel, label="Note trail:")
+        self._trail_chk = wx.CheckBox(
+            panel, label="Show fading dot trail + played-region tint",
+            name="Overlay fading dots at past notehead positions and a color tint over the played region",
+        )
+        grid.Add(trail_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._trail_chk)
+        grid.AddSpacer(0)
+
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
         # Action buttons
@@ -325,6 +345,8 @@ class MainFrame(wx.Frame):
 
         fps = self._fps_ctrl.GetValue()
         tempo = self._tempo_ctrl.GetValue()
+        cursor_line = self._cursor_chk.GetValue()
+        trail = self._trail_chk.GetValue()
         lilypond_exe = self._lilypond_picker.GetPath() or None
         ffmpeg_exe = self._ffmpeg_picker.GetPath() or None
         fluidsynth_exe = self._fluidsynth_picker.GetPath() or None
@@ -338,13 +360,13 @@ class MainFrame(wx.Frame):
         stream = _LogStream(self._log_newline, self._log_overwrite)
         threading.Thread(
             target=self._run_pipeline,
-            args=(ly, sf2, out_mp4, width, height, fps, tempo,
+            args=(ly, sf2, out_mp4, width, height, fps, tempo, cursor_line, trail,
                   lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
             daemon=True,
         ).start()
 
     def _run_pipeline(
-        self, ly, sf2, out_mp4, width, height, fps, tempo,
+        self, ly, sf2, out_mp4, width, height, fps, tempo, cursor_line, trail,
         lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
     ) -> None:
         old_out, old_err = sys.stdout, sys.stderr
@@ -362,6 +384,8 @@ class MainFrame(wx.Frame):
                 lilypond_exe=lilypond_exe,
                 ffmpeg_exe=ffmpeg_exe,
                 fluidsynth_exe=fluidsynth_exe,
+                cursor_line=cursor_line,
+                trail=trail,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=out_mp4)
         except Exception as exc:

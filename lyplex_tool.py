@@ -18,7 +18,7 @@ from typing import Optional
 
 import mido
 from lxml import etree
-from PIL import Image
+from PIL import Image, ImageDraw
 import cairosvg
 
 # ---------------------------------------------------------------------------
@@ -28,6 +28,8 @@ import cairosvg
 XLINK = "http://www.w3.org/1999/xlink"
 SVG_NS = "http://www.w3.org/2000/svg"
 CURSOR_POSITION = 0.45   # cursor at 45% from left edge
+TRAIL_DOTS = 10          # number of past beat positions shown as fading dots
+TRAIL_DOT_RADIUS = 5     # dot radius in pixels
 DEFAULT_FPS = 30
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
@@ -40,10 +42,12 @@ DEFAULT_HEIGHT = 1080
 class TimingEntry:
     ms: float
     x: float  # SVG viewBox units
+    y: float = 0.0  # SVG viewBox units (mean of beat group anchors)
 
 @dataclass
 class AnchorInfo:
     x: float   # absolute SVG units
+    y: float   # absolute SVG units
     line: int
     col: int
 
@@ -178,16 +182,18 @@ def compile_audio_midi(source: str, workdir: str, lilypond_exe: str | None = Non
 # SVG parsing — anchor extraction
 # ---------------------------------------------------------------------------
 
-def _accumulate_translate_x(element) -> float:
-    """Walk ancestor chain, sum all translate(x,y) x-values."""
+def _accumulate_translate(element) -> tuple[float, float]:
+    """Walk ancestor chain, sum all translate(x,y) values."""
     x_total = 0.0
+    y_total = 0.0
     node = element
     while node is not None:
         transform = node.get("transform", "")
         for m in re.finditer(r"translate\(\s*([+-]?\d*\.?\d+)\s*(?:,\s*([+-]?\d*\.?\d+)\s*)?\)", transform):
             x_total += float(m.group(1))
+            y_total += float(m.group(2)) if m.group(2) is not None else 0.0
         node = node.getparent()
-    return x_total
+    return x_total, y_total
 
 def _extract_anchors_from_root(root) -> list[AnchorInfo]:
     anchors: list[AnchorInfo] = []
@@ -204,8 +210,8 @@ def _extract_anchors_from_root(root) -> list[AnchorInfo]:
             col = int(parts[2])
         except ValueError:
             continue
-        x = _accumulate_translate_x(a)
-        anchors.append(AnchorInfo(x=x, line=line, col=col))
+        x, y = _accumulate_translate(a)
+        anchors.append(AnchorInfo(x=x, y=y, line=line, col=col))
     anchors.sort(key=lambda a: a.x)
     return anchors
 
@@ -387,9 +393,10 @@ def build_timing_map(
 
     for i in range(n):
         x = max(a.x for a in svg_groups[i])  # rightmost anchor = main note position
+        y = sum(a.y for a in svg_groups[i]) / len(svg_groups[i])
         tick = midi_groups[i][0][0]
         ms = _tick_to_ms(tick, tempo_map, ticks_per_beat)
-        timing_map.append(TimingEntry(ms=ms, x=x))
+        timing_map.append(TimingEntry(ms=ms, x=x, y=y))
 
     return timing_map
 
@@ -475,6 +482,8 @@ def encode_mp4(
     fps: int = DEFAULT_FPS,
     atempo: float = 1.0,
     ffmpeg_exe: str | None = None,
+    cursor_line: bool = False,
+    trail: bool = False,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
 
@@ -522,6 +531,36 @@ def encode_mp4(
                 padded.paste(frame, (0, 0))
                 frame = padded
 
+            if trail or cursor_line:
+                cx = int(width * CURSOR_POSITION)
+
+                if trail:
+                    # Composite overlay (RGBA) for alpha blending
+                    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                    ov = ImageDraw.Draw(overlay)
+
+                    # Region: semi-transparent tint left of cursor
+                    ov.rectangle([(0, 0), (cx - 1, height - 1)], fill=(100, 140, 220, 35))
+
+                    # Dots: last TRAIL_DOTS past beat positions visible in frame
+                    past = [e for e in timing_map if e.ms <= t_ms][-TRAIL_DOTS:]
+                    for idx, entry in enumerate(past):
+                        ex_px = int(entry.x * px_per_svgu) - left
+                        ey_px = int(entry.y * px_per_svgu)
+                        if -TRAIL_DOT_RADIUS <= ex_px <= width + TRAIL_DOT_RADIUS:
+                            alpha = int(200 * (idx + 1) / len(past))
+                            r = TRAIL_DOT_RADIUS
+                            ov.ellipse(
+                                [(ex_px - r, ey_px - r), (ex_px + r, ey_px + r)],
+                                fill=(220, 80, 50, alpha),
+                            )
+
+                    frame = Image.alpha_composite(frame.convert("RGBA"), overlay).convert("RGB")
+
+                if cursor_line:
+                    draw = ImageDraw.Draw(frame)
+                    draw.line([(cx, 0), (cx, height - 1)], fill=(220, 50, 50), width=2)
+
             frame.save(proc.stdin, format="PPM")
 
     finally:
@@ -546,6 +585,8 @@ def generate_mp4(
     lilypond_exe: str | None = None,
     ffmpeg_exe: str | None = None,
     fluidsynth_exe: str | None = None,
+    cursor_line: bool = False,
+    trail: bool = False,
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -593,7 +634,7 @@ def generate_mp4(
             raise RuntimeError("Timing map is empty after correlation.")
 
         if abs(tempo_multiplier - 1.0) > 1e-6:
-            timing_map = [TimingEntry(ms=e.ms / tempo_multiplier, x=e.x) for e in timing_map]
+            timing_map = [TimingEntry(ms=e.ms / tempo_multiplier, x=e.x, y=e.y) for e in timing_map]
 
         # Scale
         render_dpi, px_per_svgu = _svg_scale_from_root(svg_root, height)
@@ -617,6 +658,8 @@ def generate_mp4(
             width=width, height=height, fps=fps,
             atempo=tempo_multiplier,
             ffmpeg_exe=ffmpeg_exe,
+            cursor_line=cursor_line,
+            trail=trail,
         )
 
         print(f"[lyplex] done: {out_path}")
