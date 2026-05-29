@@ -12,7 +12,7 @@ import sys
 import tempfile
 import warnings
 from bisect import bisect_left
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 from pathlib import Path
 from typing import Optional
 
@@ -392,8 +392,9 @@ def build_timing_map(
     timing_map: list[TimingEntry] = []
 
     for i in range(n):
-        x = max(a.x for a in svg_groups[i])  # rightmost anchor = main note position
-        y = sum(a.y for a in svg_groups[i]) / len(svg_groups[i])
+        max_anchor = max(svg_groups[i], key=lambda a: a.x)
+        x = max_anchor.x  # rightmost anchor = main note position
+        y = max_anchor.y  # y of the same anchor (avoids blank-space mean across staves)
         tick = midi_groups[i][0][0]
         ms = _tick_to_ms(tick, tempo_map, ticks_per_beat)
         timing_map.append(TimingEntry(ms=ms, x=x, y=y))
@@ -511,6 +512,11 @@ def encode_mp4(
     proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
 
     ms_keys = [e.ms for e in timing_map]
+    cx = int(width * CURSOR_POSITION)
+    # Pre-build the loop-invariant tint overlay (region left of cursor, semi-transparent blue)
+    if trail:
+        _tint_base = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        ImageDraw.Draw(_tint_base).rectangle([(0, 0), (cx - 1, height - 1)], fill=(100, 140, 220, 35))
     try:
         for frame_n in range(n_frames):
             t_ms = frame_n / fps * 1000.0
@@ -532,23 +538,19 @@ def encode_mp4(
                 frame = padded
 
             if trail or cursor_line:
-                cx = int(width * CURSOR_POSITION)
-
                 if trail:
-                    # Composite overlay (RGBA) for alpha blending
-                    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                    overlay = _tint_base.copy()
                     ov = ImageDraw.Draw(overlay)
 
-                    # Region: semi-transparent tint left of cursor
-                    ov.rectangle([(0, 0), (cx - 1, height - 1)], fill=(100, 140, 220, 35))
-
-                    # Dots: last TRAIL_DOTS past beat positions visible in frame
-                    past = [e for e in timing_map if e.ms <= t_ms][-TRAIL_DOTS:]
+                    # Dots: last TRAIL_DOTS past beat positions — bisect avoids O(n) scan
+                    i_trail = bisect_left(ms_keys, t_ms)
+                    past = timing_map[max(0, i_trail - TRAIL_DOTS):i_trail]
+                    n_past = len(past)
                     for idx, entry in enumerate(past):
                         ex_px = int(entry.x * px_per_svgu) - left
                         ey_px = int(entry.y * px_per_svgu)
                         if -TRAIL_DOT_RADIUS <= ex_px <= width + TRAIL_DOT_RADIUS:
-                            alpha = int(200 * (idx + 1) / len(past))
+                            alpha = int(200 * (idx + 1) / n_past) if n_past else 0
                             r = TRAIL_DOT_RADIUS
                             ov.ellipse(
                                 [(ex_px - r, ey_px - r), (ex_px + r, ey_px + r)],
@@ -634,7 +636,7 @@ def generate_mp4(
             raise RuntimeError("Timing map is empty after correlation.")
 
         if abs(tempo_multiplier - 1.0) > 1e-6:
-            timing_map = [TimingEntry(ms=e.ms / tempo_multiplier, x=e.x, y=e.y) for e in timing_map]
+            timing_map = [dc_replace(e, ms=e.ms / tempo_multiplier) for e in timing_map]
 
         # Scale
         render_dpi, px_per_svgu = _svg_scale_from_root(svg_root, height)
