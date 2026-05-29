@@ -51,7 +51,12 @@ class AnchorInfo:
 # Preflight checks
 # ---------------------------------------------------------------------------
 
-def _require_binary(name: str) -> str:
+def _require_binary(name: str, override: str | None = None) -> str:
+    if override:
+        p = Path(override)
+        if not p.is_file():
+            raise RuntimeError(f"Binary not found at specified path: {override}")
+        return str(p)
     path = shutil.which(name)
     if path is None:
         raise RuntimeError(f"Required binary not found on PATH: {name}")
@@ -124,11 +129,11 @@ def _has_unfold_repeats(source: str) -> bool:
 # LilyPond compile
 # ---------------------------------------------------------------------------
 
-def _compile_lilypond(patched_source: str, basename: str, workdir: str) -> None:
+def _compile_lilypond(patched_source: str, basename: str, workdir: str, lilypond_exe: str | None = None) -> None:
     ly_file = Path(workdir) / f"{basename}.ly"
     ly_file.write_text(patched_source, encoding="utf-8")
 
-    lilypond = _require_binary("lilypond")
+    lilypond = _require_binary("lilypond", lilypond_exe)
     cmd = [lilypond, "-dsvg", "-dpoint-and-click", str(ly_file)]
     result = subprocess.run(
         cmd,
@@ -141,17 +146,17 @@ def _compile_lilypond(patched_source: str, basename: str, workdir: str) -> None:
             f"LilyPond compilation failed:\n{result.stderr}"
         )
 
-def compile_svg(source: str, workdir: str) -> Path:
+def compile_svg(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
     patched = patch_ly_svg(source)
-    _compile_lilypond(patched, "score-svg", workdir)
+    _compile_lilypond(patched, "score-svg", workdir, lilypond_exe)
     svg_path = Path(workdir) / "score-svg.svg"
     if not svg_path.exists():
         raise RuntimeError(f"LilyPond did not produce {svg_path}")
     return svg_path
 
-def compile_timing_midi(source: str, workdir: str) -> Path:
+def compile_timing_midi(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
     patched = patch_ly_timing_midi(source)
-    _compile_lilypond(patched, "score-timing", workdir)
+    _compile_lilypond(patched, "score-timing", workdir, lilypond_exe)
     midi_path = Path(workdir) / "score-timing.midi"
     if not midi_path.exists():
         midi_path = Path(workdir) / "score-timing.mid"
@@ -159,9 +164,9 @@ def compile_timing_midi(source: str, workdir: str) -> Path:
         raise RuntimeError("LilyPond did not produce timing MIDI.")
     return midi_path
 
-def compile_audio_midi(source: str, workdir: str) -> Path:
+def compile_audio_midi(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
     patched = patch_ly_audio_midi(source)
-    _compile_lilypond(patched, "score-audio", workdir)
+    _compile_lilypond(patched, "score-audio", workdir, lilypond_exe)
     midi_path = Path(workdir) / "score-audio.midi"
     if not midi_path.exists():
         midi_path = Path(workdir) / "score-audio.mid"
@@ -428,10 +433,10 @@ def render_strip_png(svg_path: Path, render_dpi: float, out_path: Path) -> None:
 # Audio render
 # ---------------------------------------------------------------------------
 
-def render_audio_wav(midi_path: Path, sf2_path: str, wav_path: Path) -> None:
-    _require_binary("fluidsynth")
+def render_audio_wav(midi_path: Path, sf2_path: str, wav_path: Path, fluidsynth_exe: str | None = None) -> None:
+    fs = _require_binary("fluidsynth", fluidsynth_exe)
     cmd = [
-        "fluidsynth",
+        fs,
         "-ni",
         "-F", str(wav_path),
         sf2_path,
@@ -469,8 +474,9 @@ def encode_mp4(
     height: int = DEFAULT_HEIGHT,
     fps: int = DEFAULT_FPS,
     atempo: float = 1.0,
+    ffmpeg_exe: str | None = None,
 ) -> None:
-    _require_binary("ffmpeg")
+    ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
 
     # Duration = last note ms + 2s tail
     duration_ms = timing_map[-1].ms + 2000.0
@@ -479,7 +485,7 @@ def encode_mp4(
     audio_filters = _atempo_filter(atempo) if abs(atempo - 1.0) > 1e-6 else None
 
     ffmpeg_cmd = [
-        "ffmpeg", "-y",
+        ffmpeg, "-y",
         "-framerate", str(fps),
         "-f", "image2pipe",
         "-vcodec", "ppm",
@@ -537,11 +543,14 @@ def generate_mp4(
     height: int = DEFAULT_HEIGHT,
     fps: int = DEFAULT_FPS,
     tempo_multiplier: float = 1.0,
+    lilypond_exe: str | None = None,
+    ffmpeg_exe: str | None = None,
+    fluidsynth_exe: str | None = None,
 ) -> None:
     # Preflight
-    _require_binary("lilypond")
-    _require_binary("ffmpeg")
-    _require_binary("fluidsynth")
+    _require_binary("lilypond", lilypond_exe)
+    _require_binary("ffmpeg", ffmpeg_exe)
+    _require_binary("fluidsynth", fluidsynth_exe)
     _require_soundfont(sf2_path)
 
     source = Path(ly_path).read_text(encoding="utf-8")
@@ -555,14 +564,14 @@ def generate_mp4(
 
         # Compile
         print("[lyplex] compiling SVG...")
-        svg_path = compile_svg(source, workdir)
+        svg_path = compile_svg(source, workdir, lilypond_exe)
 
         print("[lyplex] compiling timing MIDI...")
-        timing_midi_path = compile_timing_midi(source, workdir)
+        timing_midi_path = compile_timing_midi(source, workdir, lilypond_exe)
 
         if needs_audio_midi:
             print("[lyplex] compiling audio MIDI (has \\unfoldRepeats)...")
-            audio_midi_path = compile_audio_midi(source, workdir)
+            audio_midi_path = compile_audio_midi(source, workdir, lilypond_exe)
         else:
             audio_midi_path = timing_midi_path
 
@@ -598,7 +607,7 @@ def generate_mp4(
         # Audio
         wav_path = Path(workdir) / "audio.wav"
         print("[lyplex] rendering audio...")
-        render_audio_wav(audio_midi_path, sf2_path, wav_path)
+        render_audio_wav(audio_midi_path, sf2_path, wav_path, fluidsynth_exe)
 
         # Encode
         print("[lyplex] encoding MP4...")
@@ -607,6 +616,7 @@ def generate_mp4(
             wav_path, Path(out_path),
             width=width, height=height, fps=fps,
             atempo=tempo_multiplier,
+            ffmpeg_exe=ffmpeg_exe,
         )
 
         print(f"[lyplex] done: {out_path}")
