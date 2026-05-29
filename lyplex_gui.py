@@ -83,7 +83,7 @@ class MainFrame(wx.Frame):
         grid.AddGrowableCol(1, 1)
 
         # LilyPond file — label before picker
-        ly_lbl = wx.StaticText(panel, label="LilyPond file (.ly):")
+        ly_lbl = wx.StaticText(panel, label="LilyPond score (.ly):")
         self._ly_picker = wx.FilePickerCtrl(
             panel,
             wildcard="LilyPond files (*.ly)|*.ly|All files (*.*)|*.*",
@@ -92,7 +92,7 @@ class MainFrame(wx.Frame):
         )
         grid.Add(ly_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._ly_picker, 1, wx.EXPAND)
-        grid.AddSpacer(0)
+        grid.Add(wx.StaticText(panel, label="(sheet music source)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
         # Soundfont — label before picker
         sf_lbl = wx.StaticText(panel, label="Soundfont (.sf2):")
@@ -105,7 +105,7 @@ class MainFrame(wx.Frame):
         )
         grid.Add(sf_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._sf2_picker, 1, wx.EXPAND)
-        grid.AddSpacer(0)
+        grid.Add(wx.StaticText(panel, label="(instrument samples for audio)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
         # LilyPond binary — label before picker
         ly_bin_lbl = wx.StaticText(panel, label="LilyPond binary:")
@@ -118,7 +118,7 @@ class MainFrame(wx.Frame):
         )
         grid.Add(ly_bin_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._lilypond_picker, 1, wx.EXPAND)
-        grid.AddSpacer(0)
+        grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
         # ffmpeg binary — label before picker
         ffmpeg_lbl = wx.StaticText(panel, label="ffmpeg binary:")
@@ -131,7 +131,7 @@ class MainFrame(wx.Frame):
         )
         grid.Add(ffmpeg_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._ffmpeg_picker, 1, wx.EXPAND)
-        grid.AddSpacer(0)
+        grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
         # fluidsynth binary — label before picker
         fs_lbl = wx.StaticText(panel, label="fluidsynth binary:")
@@ -144,7 +144,7 @@ class MainFrame(wx.Frame):
         )
         grid.Add(fs_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._fluidsynth_picker, 1, wx.EXPAND)
-        grid.AddSpacer(0)
+        grid.Add(wx.StaticText(panel, label="(blank = use system PATH)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
         # Output folder — label before picker
         dir_lbl = wx.StaticText(panel, label="Output folder:")
@@ -155,7 +155,7 @@ class MainFrame(wx.Frame):
         )
         grid.Add(dir_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._dir_picker, 1, wx.EXPAND)
-        grid.AddSpacer(0)
+        grid.Add(wx.StaticText(panel, label="(where to save the MP4)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
         # Resolution — label before spinners
         res_lbl = wx.StaticText(panel, label="Resolution (W × H):")
