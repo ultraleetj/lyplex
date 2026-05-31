@@ -43,6 +43,171 @@ def _parse_color(choice: wx.Choice, fallback: tuple[int, int, int]) -> tuple[int
 
 
 # ---------------------------------------------------------------------------
+# Metronome settings dialog
+# ---------------------------------------------------------------------------
+
+class MetronomeDialog(wx.Dialog):
+    _WAVEFORMS = ["sine", "square", "triangle", "saw"]
+
+    def __init__(self, parent, click_a: ClickParams, click_b: ClickParams, count_in: int):
+        super().__init__(parent, title="Metronome Settings",
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        panel = wx.Panel(self)
+        grid = wx.FlexGridSizer(cols=3, hgap=8, vgap=6)
+        grid.AddGrowableCol(1, 1)
+
+        def _section(title: str) -> None:
+            st = wx.StaticText(panel, label=title)
+            st.SetFont(st.GetFont().Bold())
+            grid.Add(st, 0, wx.TOP | wx.ALIGN_CENTER_VERTICAL, 6)
+            grid.AddSpacer(0)
+            grid.AddSpacer(0)
+
+        def _spin(lo: int, hi: int, val: int, name: str) -> wx.SpinCtrl:
+            return wx.SpinCtrl(panel, min=lo, max=hi, initial=val, name=name)
+
+        def _choice(sel: int, name: str) -> wx.Choice:
+            ch = wx.Choice(panel, choices=self._WAVEFORMS, name=name)
+            ch.SetSelection(sel)
+            return ch
+
+        def _spind(lo: float, hi: float, val: float, inc: float, name: str) -> wx.SpinCtrlDouble:
+            c = wx.SpinCtrlDouble(panel, min=lo, max=hi, initial=val, inc=inc, name=name)
+            c.SetDigits(2)
+            return c
+
+        def _row(label: str, ctrl, hint: str = "") -> None:
+            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(ctrl, 0, wx.EXPAND)
+            grid.Add(wx.StaticText(panel, label=hint) if hint else (0, 0),
+                     0, wx.ALIGN_CENTER_VERTICAL)
+
+        def _wf_idx(p: ClickParams) -> int:
+            try:
+                return self._WAVEFORMS.index(p.waveform)
+            except ValueError:
+                return 0
+
+        _section("Accent click  (beat 1)")
+        self._a_freq = _spin(100, 8000, int(click_a.freq_hz), "Accent frequency")
+        _row("Frequency:", self._a_freq, "Hz")
+        self._a_wave = _choice(_wf_idx(click_a), "Accent waveform")
+        _row("Waveform:", self._a_wave)
+        self._a_dur = _spin(5, 200, int(click_a.duration_ms), "Accent duration")
+        _row("Duration:", self._a_dur, "ms")
+        self._a_amp = _spind(0.05, 1.0, click_a.amplitude, 0.05, "Accent amplitude")
+        _row("Amplitude:", self._a_amp, "0.05 – 1.0")
+
+        _section("Beat click  (beats 2, 3, …)")
+        self._b_freq = _spin(100, 8000, int(click_b.freq_hz), "Beat frequency")
+        _row("Frequency:", self._b_freq, "Hz")
+        self._b_wave = _choice(_wf_idx(click_b), "Beat waveform")
+        _row("Waveform:", self._b_wave)
+        self._b_dur = _spin(5, 200, int(click_b.duration_ms), "Beat duration")
+        _row("Duration:", self._b_dur, "ms")
+        self._b_amp = _spind(0.05, 1.0, click_b.amplitude, 0.05, "Beat amplitude")
+        _row("Amplitude:", self._b_amp, "0.05 – 1.0")
+
+        _section("Count-in")
+        self._count_in_spin = _spin(0, 2, count_in, "Count-in bars")
+        _row("Bars:", self._count_in_spin, "0 = no count-in")
+
+        btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        root = wx.BoxSizer(wx.VERTICAL)
+        root.Add(grid, 0, wx.EXPAND | wx.ALL, 12)
+        root.Add(wx.StaticLine(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        root.Add(btns, 0, wx.EXPAND | wx.ALL, 8)
+        panel.SetSizer(root)
+        root.Fit(self)
+
+    def get_values(self) -> tuple[ClickParams, ClickParams, int]:
+        a = ClickParams(
+            freq_hz=float(self._a_freq.GetValue()),
+            waveform=self._a_wave.GetStringSelection(),
+            duration_ms=float(self._a_dur.GetValue()),
+            amplitude=self._a_amp.GetValue(),
+        )
+        b = ClickParams(
+            freq_hz=float(self._b_freq.GetValue()),
+            waveform=self._b_wave.GetStringSelection(),
+            duration_ms=float(self._b_dur.GetValue()),
+            amplitude=self._b_amp.GetValue(),
+        )
+        return a, b, self._count_in_spin.GetValue()
+
+
+# ---------------------------------------------------------------------------
+# Watermark settings dialog
+# ---------------------------------------------------------------------------
+
+class WatermarkDialog(wx.Dialog):
+    _POSITIONS = ["BR", "BL", "TR", "TL"]
+
+    def __init__(self, parent, path: str, position: str, opacity: float):
+        super().__init__(parent, title="Watermark Settings",
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        panel = wx.Panel(self)
+        grid = wx.FlexGridSizer(cols=3, hgap=8, vgap=8)
+        grid.AddGrowableCol(1, 1)
+
+        # Logo file picker
+        grid.Add(wx.StaticText(panel, label="Logo file:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._path_tc = wx.TextCtrl(panel, value=path, name="Watermark logo file")
+        btn_browse = wx.Button(panel, label="Browse…", size=(70, -1))
+        def _on_browse(_e):
+            dlg = wx.FileDialog(
+                self,
+                wildcard="Images (*.svg;*.png;*.jpg;*.jpeg)|*.svg;*.png;*.jpg;*.jpeg"
+                         "|All files (*.*)|*.*",
+                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+            )
+            if dlg.ShowModal() == wx.ID_OK:
+                self._path_tc.SetValue(dlg.GetPath())
+            dlg.Destroy()
+        btn_browse.Bind(wx.EVT_BUTTON, _on_browse)
+        sz_path = wx.BoxSizer(wx.HORIZONTAL)
+        sz_path.Add(self._path_tc, 1, wx.EXPAND)
+        sz_path.Add(btn_browse, 0, wx.LEFT, 4)
+        grid.Add(sz_path, 1, wx.EXPAND)
+        grid.Add(wx.StaticText(panel, label="(blank = no watermark)"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
+
+        # Position
+        try:
+            pos_idx = self._POSITIONS.index(position)
+        except ValueError:
+            pos_idx = 0
+        grid.Add(wx.StaticText(panel, label="Position:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._pos_ch = wx.Choice(panel, choices=self._POSITIONS, name="Watermark position")
+        self._pos_ch.SetSelection(pos_idx)
+        grid.Add(self._pos_ch, 0)
+        grid.Add(wx.StaticText(panel, label="corner of video"), 0, wx.ALIGN_CENTER_VERTICAL)
+
+        # Opacity
+        grid.Add(wx.StaticText(panel, label="Opacity:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._opacity_ctrl = wx.SpinCtrlDouble(
+            panel, min=0.05, max=1.0, initial=opacity, inc=0.05, name="Watermark opacity")
+        self._opacity_ctrl.SetDigits(2)
+        grid.Add(self._opacity_ctrl, 0)
+        grid.Add(wx.StaticText(panel, label="0.05 – 1.0"), 0, wx.ALIGN_CENTER_VERTICAL)
+
+        btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        root = wx.BoxSizer(wx.VERTICAL)
+        root.Add(grid, 0, wx.EXPAND | wx.ALL, 12)
+        root.Add(wx.StaticLine(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        root.Add(btns, 0, wx.EXPAND | wx.ALL, 8)
+        panel.SetSizer(root)
+        root.Fit(self)
+
+    def get_values(self) -> tuple[str, str, float]:
+        return (
+            self._path_tc.GetValue().strip(),
+            self._pos_ch.GetStringSelection(),
+            self._opacity_ctrl.GetValue(),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Log stream — redirects print() to the log widget, handles \r progress lines
 # ---------------------------------------------------------------------------
 
@@ -83,6 +248,13 @@ class MainFrame(wx.Frame):
         self._mp4_path: str | None = None
         self._html_path: str | None = None
         self._overwriting_log_line = False
+        # Metronome / watermark dialog state (updated when dialogs are accepted)
+        self._click_a = ClickParams(freq_hz=1500.0, waveform="sine", duration_ms=20.0, amplitude=0.6)
+        self._click_b = ClickParams(freq_hz=1000.0, waveform="sine", duration_ms=20.0, amplitude=0.4)
+        self._count_in = 0
+        self._watermark_path = ""
+        self._watermark_pos = "BR"
+        self._watermark_opacity = 0.6
         self._build_ui()
         self.CreateStatusBar()
         self.SetStatusText("Ready.")
@@ -196,7 +368,7 @@ class MainFrame(wx.Frame):
             except ValueError:
                 default_idx = 0
             grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            ch = wx.Choice(panel, choices=_PRESET_NAMES)
+            ch = wx.Choice(panel, choices=_PRESET_NAMES, name=label.rstrip(":"))
             ch.SetSelection(default_idx)
             swatch = wx.Panel(panel, size=(20, 20))
             swatch.SetBackgroundColour(wx.Colour(*default_rgb))
@@ -253,8 +425,8 @@ class MainFrame(wx.Frame):
         # --- numeric rows ---
 
         grid.Add(wx.StaticText(panel, label="Resolution (W × H):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._width_ctrl = wx.SpinCtrl(panel, min=320, max=7680, initial=DEFAULT_WIDTH, size=(90, -1))
-        self._height_ctrl = wx.SpinCtrl(panel, min=240, max=4320, initial=DEFAULT_HEIGHT, size=(90, -1))
+        self._width_ctrl  = wx.SpinCtrl(panel, min=320, max=7680, initial=DEFAULT_WIDTH,  size=(90, -1), name="Video width")
+        self._height_ctrl = wx.SpinCtrl(panel, min=240, max=4320, initial=DEFAULT_HEIGHT, size=(90, -1), name="Video height")
         res_box = wx.BoxSizer(wx.HORIZONTAL)
         res_box.Add(self._width_ctrl)
         res_box.Add(wx.StaticText(panel, label=" × "), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -263,7 +435,7 @@ class MainFrame(wx.Frame):
         grid.AddSpacer(0)
 
         grid.Add(wx.StaticText(panel, label="Frame rate (fps):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._fps_ctrl = wx.SpinCtrl(panel, min=15, max=60, initial=DEFAULT_FPS, size=(90, -1))
+        self._fps_ctrl = wx.SpinCtrl(panel, min=15, max=60, initial=DEFAULT_FPS, size=(90, -1), name="Frame rate")
         grid.Add(self._fps_ctrl)
         grid.AddSpacer(0)
 
@@ -278,7 +450,7 @@ class MainFrame(wx.Frame):
         self._cursor_color_cp = color_row(
             "Cursor color:", (220, 50, 50))
         grid.Add(wx.StaticText(panel, label="Cursor width (px):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._cursor_width_ctrl = wx.SpinCtrl(panel, min=1, max=8, initial=2, size=(60, -1))
+        self._cursor_width_ctrl = wx.SpinCtrl(panel, min=1, max=8, initial=2, size=(60, -1), name="Cursor width")
         grid.Add(self._cursor_width_ctrl)
         grid.AddSpacer(0)
 
@@ -301,63 +473,31 @@ class MainFrame(wx.Frame):
         self._bar_numbers_chk = chk_row(
             "Bar numbers:", "Show bar number above every bar line")
         self._bar_numbers_chk.SetValue(True)
-        self._metronome_chk = chk_row(
-            "Metronome click:", "Mix synthesized click track into audio (accent on beat 1)")
+        # Metronome: checkbox + Settings… button
+        grid.Add(wx.StaticText(panel, label="Metronome click:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._metronome_chk = wx.CheckBox(
+            panel, label="Mix synthesized click track into audio",
+            name="Metronome click enabled")
+        grid.Add(self._metronome_chk, 0, wx.ALIGN_CENTER_VERTICAL)
+        _btn_metro = wx.Button(panel, label="Click settings…", size=(110, -1),
+                               name="Click settings")
+        _btn_metro.Bind(wx.EVT_BUTTON, self._on_metronome_settings)
+        grid.Add(_btn_metro, 0)
 
-        _WAVEFORMS = ["sine", "square", "triangle", "saw"]
-
-        def click_row(label: str, default_freq: int, default_amp: float) -> tuple:
-            """Add a 3-col row for one click type; return (freq_ctrl, wave_ctrl, dur_ctrl, amp_ctrl)."""
-            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            inner = wx.BoxSizer(wx.HORIZONTAL)
-            freq_ctrl = wx.SpinCtrl(panel, min=100, max=8000, initial=default_freq, size=(65, -1))
-            wave_ctrl = wx.Choice(panel, choices=_WAVEFORMS)
-            wave_ctrl.SetSelection(0)
-            dur_ctrl  = wx.SpinCtrl(panel, min=5, max=200, initial=20, size=(50, -1))
-            amp_ctrl  = wx.SpinCtrlDouble(panel, min=0.05, max=1.0, initial=default_amp, inc=0.05, size=(58, -1))
-            amp_ctrl.SetDigits(2)
-            for w, lbl in ((freq_ctrl, "Hz"), (wave_ctrl, None), (dur_ctrl, "ms"), (amp_ctrl, "vol")):
-                inner.Add(w, 0, wx.RIGHT, 2)
-                if lbl:
-                    inner.Add(wx.StaticText(panel, label=lbl), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-            grid.Add(inner, 1, wx.EXPAND)
-            grid.AddSpacer(0)
-            return freq_ctrl, wave_ctrl, dur_ctrl, amp_ctrl
-
-        (self._click_a_freq, self._click_a_wave,
-         self._click_a_dur,  self._click_a_amp) = click_row("Click accent (beat 1):", 1500, 0.6)
-        (self._click_b_freq, self._click_b_wave,
-         self._click_b_dur,  self._click_b_amp) = click_row("Click beat:", 1000, 0.4)
-
-        grid.Add(wx.StaticText(panel, label="Count-in bars:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._count_in_ctrl = wx.SpinCtrl(panel, min=0, max=2, initial=0, size=(55, -1))
-        grid.Add(self._count_in_ctrl)
-        grid.Add(wx.StaticText(panel, label="(0 = no count-in)"), 0, wx.ALIGN_CENTER_VERTICAL)
+        # Watermark: summary label + Settings… button
+        grid.Add(wx.StaticText(panel, label="Watermark:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._watermark_summary = wx.StaticText(panel, label="(none)")
+        grid.Add(self._watermark_summary, 0, wx.ALIGN_CENTER_VERTICAL)
+        _btn_wm = wx.Button(panel, label="Branding settings…", size=(130, -1),
+                            name="Branding settings")
+        _btn_wm.Bind(wx.EVT_BUTTON, self._on_watermark_settings)
+        grid.Add(_btn_wm, 0)
 
         grid.Add(wx.StaticText(panel, label="Fade in/out (frames):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._fade_frames_ctrl = wx.SpinCtrl(panel, min=0, max=120, initial=0, size=(60, -1))
+        self._fade_frames_ctrl = wx.SpinCtrl(panel, min=0, max=120, initial=0, size=(60, -1),
+                                             name="Fade frames")
         grid.Add(self._fade_frames_ctrl)
         grid.Add(wx.StaticText(panel, label="(0 = no fade, 15 = 0.5s at 30fps)"), 0, wx.ALIGN_CENTER_VERTICAL)
-
-        self._watermark_tc = file_row(
-            "Watermark logo:",
-            "Images (*.svg;*.png;*.jpg;*.jpeg)|*.svg;*.png;*.jpg;*.jpeg|All files (*.*)|*.*",
-            hint="(blank = no watermark)")
-
-        grid.Add(wx.StaticText(panel, label="Watermark position:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._watermark_pos_ctrl = wx.Choice(panel, choices=["BR", "BL", "TR", "TL"])
-        self._watermark_pos_ctrl.SetSelection(0)
-        wm_pos_sz = wx.BoxSizer(wx.HORIZONTAL)
-        wm_pos_sz.Add(self._watermark_pos_ctrl, 0)
-        grid.Add(wm_pos_sz, 1, wx.EXPAND)
-        grid.AddSpacer(0)
-
-        grid.Add(wx.StaticText(panel, label="Watermark opacity:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._watermark_opacity_ctrl = wx.SpinCtrlDouble(
-            panel, min=0.05, max=1.0, initial=0.6, inc=0.05, size=(70, -1))
-        self._watermark_opacity_ctrl.SetDigits(2)
-        grid.Add(self._watermark_opacity_ctrl)
-        grid.AddSpacer(0)
 
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
@@ -467,23 +607,13 @@ class MainFrame(wx.Frame):
         use_bar_timing = self._bar_timing_chk.GetValue()
         bar_numbers = self._bar_numbers_chk.GetValue()
         metronome = self._metronome_chk.GetValue()
-        click_a = ClickParams(
-            freq_hz=self._click_a_freq.GetValue(),
-            waveform=self._click_a_wave.GetStringSelection(),
-            duration_ms=self._click_a_dur.GetValue(),
-            amplitude=self._click_a_amp.GetValue(),
-        )
-        click_b = ClickParams(
-            freq_hz=self._click_b_freq.GetValue(),
-            waveform=self._click_b_wave.GetStringSelection(),
-            duration_ms=self._click_b_dur.GetValue(),
-            amplitude=self._click_b_amp.GetValue(),
-        )
-        count_in_bars = self._count_in_ctrl.GetValue()
+        click_a = self._click_a
+        click_b = self._click_b
+        count_in_bars = self._count_in
         fade_frames = self._fade_frames_ctrl.GetValue()
-        watermark_path = self._watermark_tc.GetValue().strip()
-        watermark_pos = self._watermark_pos_ctrl.GetStringSelection()
-        watermark_opacity = self._watermark_opacity_ctrl.GetValue()
+        watermark_path = self._watermark_path
+        watermark_pos = self._watermark_pos
+        watermark_opacity = self._watermark_opacity
         lilypond_exe = self._lilypond_tc.GetValue().strip() or None
         ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
         fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
@@ -507,6 +637,20 @@ class MainFrame(wx.Frame):
                   lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
             daemon=True,
         ).start()
+
+    def _on_metronome_settings(self, _event) -> None:
+        dlg = MetronomeDialog(self, self._click_a, self._click_b, self._count_in)
+        if dlg.ShowModal() == wx.ID_OK:
+            self._click_a, self._click_b, self._count_in = dlg.get_values()
+        dlg.Destroy()
+
+    def _on_watermark_settings(self, _event) -> None:
+        dlg = WatermarkDialog(self, self._watermark_path, self._watermark_pos, self._watermark_opacity)
+        if dlg.ShowModal() == wx.ID_OK:
+            self._watermark_path, self._watermark_pos, self._watermark_opacity = dlg.get_values()
+            name = Path(self._watermark_path).name if self._watermark_path else "(none)"
+            self._watermark_summary.SetLabel(name)
+        dlg.Destroy()
 
     def _run_pipeline(
         self, ly, sf2, out_mp4, width, height, fps, tempo,
