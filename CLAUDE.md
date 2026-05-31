@@ -392,7 +392,54 @@ def render_click_wav(beat_ms_list, accented_indices, out_path):
 - `cursor_line=True` — 2px red vertical line at 45% viewport width each frame
 - `trail=True` — semi-transparent blue tint over played region + fading red dots at past TRAIL_DOTS notehead positions; dots use bisect for O(log n) per-frame lookup; tint overlay pre-built outside loop
 
-**Next task:** metronome audio (click track mixed into output WAV).
+**Next task:** defineScrollingTask — see section below.
+
+---
+
+## defineScrollingTask — bar-based timing map
+
+### Problem with current anchor-based approach
+
+`_select_dominant_staff_anchors` picks the SVG y-cluster closest in group count
+to the MIDI driving track (longest total duration). Works for chord names + melody.
+Open edge case: a staff with 32nd-note runs → MIDI picks it (most total duration) →
+SVG also picks it → scroll twitches on every 32nd note.
+
+### Proposed solution: bar-based timing
+
+Use **bar start positions** as scroll anchors instead of note anchors.
+- Naturally granular: one scroll step per bar regardless of note density
+- Eliminates all staff-selection complexity, grace-note reconciliation, mismatch warnings
+- Works for sparse, dense, runs, rests — anything
+
+### Two sub-problems
+
+**1. Bar timing from MIDI — easy, pieces already exist**
+- Parse `time_signature` meta from MIDI track 0 → `beats_per_bar`
+- Use existing `_build_tempo_map` + `ticks_per_beat`
+- Every `ticks_per_beat × beats_per_bar` ticks = one bar start
+- Convert to ms list via existing `_tick_to_ms`
+
+**2. Bar x-positions from SVG — three options, needs decision**
+
+| Option | How | Risk |
+|--------|-----|------|
+| A. Geometric detection | Scan SVG for thin vertical paths (aspect > 10:1, spans staff height) | Fragile — stems look similar |
+| B. `\pointAndClickTypes` on bar events | Inject `#'bar-check-event` alongside `#'note-event` in patched SVG | Needs verification in `upstream/lilypond/scm/define-event-classes.scm` — bar lines are grobs, may not be supported |
+| C. Hybrid snap | Keep note anchors, snap each SVG group to nearest bar boundary using MIDI bar ticks | Safe fallback, no new SVG parsing |
+
+**Recommended first step:** check `upstream/lilypond/scm/define-event-classes.scm` for
+a bar-line-compatible event type usable with `\pointAndClickTypes`. Also check
+`input/regression/point-and-click-types.ly` upstream for examples.
+If Option B works → clean, use it. If not → implement Option C (hybrid snap).
+
+### Current state (as of session end)
+
+- `_select_dominant_staff_anchors` works and is committed (branch `master`)
+- Test score `examples/de conversa em conversa melodia.ly` produces clean output:
+  2 staves detected, y=[13,13] (chord names, 44 groups) matched to 44 MIDI groups
+- No mismatch warnings in current run
+- The 32nd-note open question is the motivation for bar-based approach
 
 ---
 
