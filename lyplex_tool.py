@@ -309,14 +309,8 @@ def build_watermark_overlay(
     lw, lh = logo.size
 
     position = position.upper()
-    if position == "TL":
-        x, y = margin, margin
-    elif position == "TR":
-        x, y = width - lw - margin, margin
-    elif position == "BL":
-        x, y = margin, height - lh - margin
-    else:  # BR
-        x, y = width - lw - margin, height - lh - margin
+    x = margin if "L" in position else width - lw - margin
+    y = margin if "T" in position else height - lh - margin
 
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     overlay.paste(logo, (x, y), logo)
@@ -796,7 +790,6 @@ def _make_click_burst(p: ClickParams) -> list[float]:
     """Pre-render one click burst as a float list (reused for every beat of the same type)."""
     n = max(1, int(p.duration_ms / 1000.0 * _CLICK_SAMPLE_RATE))
     phase_step = 2 * math.pi * p.freq_hz / _CLICK_SAMPLE_RATE
-    sr = _CLICK_SAMPLE_RATE
     burst = []
     for k in range(n):
         env = math.sin(math.pi * k / n)
@@ -806,7 +799,7 @@ def _make_click_burst(p: ClickParams) -> list[float]:
         elif p.waveform == "triangle":
             s = 2 / math.pi * math.asin(math.sin(phase))
         elif p.waveform == "saw":
-            s = 2 * ((p.freq_hz * k / sr) % 1.0) - 1.0
+            s = 2 * ((p.freq_hz * k / _CLICK_SAMPLE_RATE) % 1.0) - 1.0
         else:
             s = math.sin(phase)
         burst.append(p.amplitude * env * s)
@@ -834,18 +827,18 @@ def render_click_wav(
     def t2ms(tick: int) -> float:
         return _tick_to_ms(tick, tempo_map, ticks_per_beat)
 
-    bar_ms = t2ms(ticks_per_bar) / tempo_multiplier if count_in_bars > 0 else 0.0
-    count_in_ms = count_in_bars * bar_ms
-
-    last_tick = max(tempo_map[-1][0], int(total_ms / 1000.0 * 2 * ticks_per_beat))
-
+    count_in_ms = 0.0
     clicks: list[tuple[float, bool]] = []
 
     if count_in_bars > 0:
+        bar_ms = t2ms(ticks_per_bar) / tempo_multiplier
+        count_in_ms = count_in_bars * bar_ms
         count_in_ticks = count_in_bars * ticks_per_bar
         for t in range(count_in_ticks, 0, -ticks_per_beat):
             t_ms = count_in_ms - t2ms(t) / tempo_multiplier
             clicks.append((t_ms, t % ticks_per_bar == 0))
+
+    last_tick = max(tempo_map[-1][0], int(total_ms / 1000.0 * 2 * ticks_per_beat))
 
     for t in range(0, last_tick + ticks_per_beat, ticks_per_beat):
         t_ms = t2ms(t) / tempo_multiplier + count_in_ms
@@ -858,7 +851,7 @@ def render_click_wav(
 
     burst_a = _make_click_burst(ap)
     burst_b = _make_click_burst(bp)
-    buf = array.array('f', bytes(n_samples * 4))
+    buf = array.array('f', [0.0] * n_samples)
 
     for t_ms, is_accent in clicks:
         burst = burst_a if is_accent else burst_b
@@ -982,6 +975,16 @@ def encode_mp4(
 
     needs_overlay = trail or bool(_hl_map)
 
+    # Pre-composite fixed overlays into one image (done once outside frame loop)
+    fixed_overlay: Image.Image | None = None
+    if title_footer_overlay is not None or watermark_overlay is not None:
+        _combined = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        if title_footer_overlay is not None:
+            _combined = Image.alpha_composite(_combined, title_footer_overlay)
+        if watermark_overlay is not None:
+            _combined = Image.alpha_composite(_combined, watermark_overlay)
+        fixed_overlay = _combined
+
     try:
         for frame_n in range(n_frames):
             t_ms = frame_n / fps * 1000.0 - count_in_ms
@@ -1042,11 +1045,8 @@ def encode_mp4(
                     draw = ImageDraw.Draw(frame)
                     draw.line([(cx, 0), (cx, height - 1)], fill=cursor_color, width=cursor_width)
 
-            if title_footer_overlay is not None:
-                frame = Image.alpha_composite(frame.convert("RGBA"), title_footer_overlay).convert("RGB")
-
-            if watermark_overlay is not None:
-                frame = Image.alpha_composite(frame.convert("RGBA"), watermark_overlay).convert("RGB")
+            if fixed_overlay is not None:
+                frame = Image.alpha_composite(frame.convert("RGBA"), fixed_overlay).convert("RGB")
 
             if fade_frames > 0:
                 if frame_n < fade_frames:
