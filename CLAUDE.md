@@ -101,9 +101,13 @@ Anchor format (from `scm/output-svg.scm`):
 URI has 4 fields: FILE, LINE, CHR (char offset), COL (end column). Windows backslashes already
 converted to `/` by LilyPond before embedding — no special handling needed.
 
-The `<a>` is nested inside `<g transform="translate(x, y)">` ancestors (staff, system, page offsets).
-**x position**: walk ancestor chain, accumulate all `translate(x, y)` x-values → absolute x in
+In LilyPond 2.24, `<a>` is a **direct child of `<svg>` root** and contains a
+`<g transform="translate(x, y)">` child — the translate is INSIDE the anchor, not outside it.
+(Older versions nested `<a>` inside `<g>` ancestors; that structure no longer applies.)
+**x position**: read `translate(x, y)` from the first child `<g>` of the `<a>` element → absolute x in
 LilyPond SVG units (1 unit = 1.7573 mm, set by `lily-unit-length`).
+Confirmed in `scm/output-svg.scm`: `settranslation` emits `<g transform="translate(x,y)">` and
+the point-and-click anchor opens before it, wrapping it as a child.
 
 Extract: `[(line, chr, x_absolute), ...]` for all `<a xlink:href="textedit://...">` elements.
 
