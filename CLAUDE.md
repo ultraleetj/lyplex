@@ -453,4 +453,4 @@ because the note anchor at bar start maps exactly to bar start tick.
 - [ ] Dynamics / hairpins: rendered by LilyPond, visible in SVG, no special handling
 - [x] SVG/MIDI mismatch (svg>midi): reconciled via closest-pair SVG merge (grace note case)
 - [ ] SVG/MIDI mismatch (svg<midi): currently warns + truncates; no fuzzy alignment yet
-- [ ] Metronome click track: mix synthesized clicks into audio at beat onsets (planned)
+- [x] Metronome click track: mix synthesized clicks into audio at beat onsets
