@@ -104,6 +104,19 @@ def _inject_point_and_click_types(source: str) -> str:
         raise ValueError("Could not inject \\pointAndClickTypes: no \\version line found.")
     return result
 
+def _inject_all_bar_numbers(source: str) -> str:
+    """Append layout block that shows a bar number above every bar."""
+    snippet = r"""
+\layout {
+  \context {
+    \Score
+    \override BarNumber.break-visibility = ##(#t #t #t)
+    barNumberVisibility = #all-bar-numbers-visible
+  }
+}
+"""
+    return source + snippet
+
 def _add_strip_paper(source: str) -> str:
     """Append single-strip paper block."""
     paper = r"""
@@ -118,10 +131,12 @@ def _add_strip_paper(source: str) -> str:
 """
     return source + paper
 
-def patch_ly_svg(source: str) -> str:
+def patch_ly_svg(source: str, bar_numbers: bool = True) -> str:
     s = _strip_book_output_name(source)
     s = _strip_ties(s)
     s = _inject_point_and_click_types(s)
+    if bar_numbers:
+        s = _inject_all_bar_numbers(s)
     s = _add_strip_paper(s)
     return s
 
@@ -263,8 +278,8 @@ def _compile_lilypond(patched_source: str, basename: str, workdir: str, lilypond
             f"LilyPond compilation failed (exit {result.returncode})"
         )
 
-def compile_svg(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
-    patched = patch_ly_svg(source)
+def compile_svg(source: str, workdir: str, lilypond_exe: str | None = None, bar_numbers: bool = True) -> Path:
+    patched = patch_ly_svg(source, bar_numbers=bar_numbers)
     _compile_lilypond(patched, "score-svg", workdir, lilypond_exe)
     # LilyPond names output after the .ly basename, but \bookOutputName can override it.
     # Glob for any SVG produced (exclude the patched source file itself).
@@ -735,6 +750,7 @@ def encode_mp4(
     highlight_map: list[TimingEntry] | None = None,
     highlight_color: tuple[int, int, int] = (50, 120, 220),
     title_footer_overlay: Image.Image | None = None,
+    fade_frames: int = 0,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
 
@@ -845,6 +861,17 @@ def encode_mp4(
             if title_footer_overlay is not None:
                 frame = Image.alpha_composite(frame.convert("RGBA"), title_footer_overlay).convert("RGB")
 
+            if fade_frames > 0:
+                if frame_n < fade_frames:
+                    alpha = frame_n / fade_frames
+                elif frame_n >= n_frames - fade_frames:
+                    alpha = (n_frames - 1 - frame_n) / fade_frames
+                else:
+                    alpha = 1.0
+                if alpha < 1.0:
+                    black = Image.new("RGB", (width, height), (0, 0, 0))
+                    frame = Image.blend(black, frame.convert("RGB"), alpha)
+
             frame.save(proc.stdin, format="PPM")
 
     finally:
@@ -878,6 +905,8 @@ def generate_mp4(
     overlay_title: bool = False,
     overlay_footer: bool = False,
     use_bar_timing: bool = True,
+    bar_numbers: bool = True,
+    fade_frames: int = 0,
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -897,7 +926,7 @@ def generate_mp4(
 
         # Compile
         print("[lyplex] compiling SVG...")
-        svg_path = compile_svg(source, workdir, lilypond_exe)
+        svg_path = compile_svg(source, workdir, lilypond_exe, bar_numbers=bar_numbers)
 
         print("[lyplex] compiling timing MIDI...")
         timing_midi_path = compile_timing_midi(source, workdir, lilypond_exe)
@@ -968,6 +997,7 @@ def generate_mp4(
             highlight_map=note_timing_map,
             highlight_color=highlight_color,
             title_footer_overlay=tf_overlay,
+            fade_frames=fade_frames,
         )
 
         print(f"[lyplex] done: {out_path}")
