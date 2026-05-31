@@ -885,6 +885,32 @@ def render_click_wav(
 # MP4 export
 # ---------------------------------------------------------------------------
 
+def _build_audio_cmd(
+    click_wav_path: Path | None,
+    delay_ms: int,
+    audio_filters: str | None,
+) -> list[str]:
+    """Return ffmpeg audio-related args (extra -i inputs + filter flags)."""
+    args: list[str] = []
+    if click_wav_path is not None:
+        args += ["-i", str(click_wav_path)]
+        segments = [f"[1:a]adelay={delay_ms}|{delay_ms}[music]"]
+        music_out = "[music]"
+        if audio_filters:
+            segments.append(f"[music]{audio_filters}[musicf]")
+            music_out = "[musicf]"
+        segments.append(f"{music_out}[2:a]amix=inputs=2:duration=longest:normalize=0")
+        args += ["-filter_complex", ";".join(segments)]
+    elif delay_ms > 0:
+        chain = f"[1:a]adelay={delay_ms}|{delay_ms}"
+        if audio_filters:
+            chain += f",{audio_filters}"
+        args += ["-filter_complex", chain]
+    elif audio_filters:
+        args += ["-filter:a", audio_filters]
+    return args
+
+
 def _atempo_filter(multiplier: float) -> str:
     """Build ffmpeg atempo filter chain for any multiplier in [0.25, 4.0]."""
     filters: list[str] = []
@@ -941,23 +967,7 @@ def encode_mp4(
         "-i", "pipe:0",
         "-i", str(wav_path),
     ]
-    if click_wav_path is not None:
-        ffmpeg_cmd += ["-i", str(click_wav_path)]
-        music_chain = f"[1:a]adelay={delay_ms}|{delay_ms}[music]"
-        if audio_filters:
-            music_chain += f";[music]{audio_filters}[musicf]"
-            mix_in = "[musicf][2:a]"
-        else:
-            mix_in = "[music][2:a]"
-        afilter = f"{music_chain};{mix_in}amix=inputs=2:duration=longest:normalize=0"
-        ffmpeg_cmd += ["-filter_complex", afilter]
-    elif delay_ms > 0:
-        music_chain = f"[1:a]adelay={delay_ms}|{delay_ms}"
-        if audio_filters:
-            music_chain += f",{audio_filters}"
-        ffmpeg_cmd += ["-filter_complex", music_chain]
-    elif audio_filters:
-        ffmpeg_cmd += ["-filter:a", audio_filters]
+    ffmpeg_cmd += _build_audio_cmd(click_wav_path, delay_ms, audio_filters)
     ffmpeg_cmd += ["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
                    "-shortest", str(out_path)]
 
