@@ -465,6 +465,44 @@ def extract_timing_midi(midi_path: Path) -> tuple[list[tuple[int, int]], list[tu
 # Beat group correlation → timing map
 # ---------------------------------------------------------------------------
 
+def _select_dominant_staff_anchors(anchors: list[AnchorInfo], y_gap: float = 1.5) -> list[AnchorInfo]:
+    """When multiple staves exist, keep only the one with fewest beat groups (longest note values).
+
+    Clusters anchors by y, splitting on gaps > y_gap SVG units.  Picks the
+    cluster with the fewest unique x positions — i.e. the staff whose notes
+    last the longest on average (chord names, bass line, etc.).  Falls back
+    to all anchors when only one cluster is found.
+    """
+    if not anchors:
+        return anchors
+
+    sorted_ys = sorted(set(round(a.y, 1) for a in anchors))
+    clusters: list[tuple[float, float]] = []
+    lo = hi = sorted_ys[0]
+    for y in sorted_ys[1:]:
+        if y - hi > y_gap:
+            clusters.append((lo, hi))
+            lo = hi = y
+        else:
+            hi = y
+    clusters.append((lo, hi))
+
+    if len(clusters) <= 1:
+        return anchors
+
+    best_cluster, best_count = None, float("inf")
+    for c_lo, c_hi in clusters:
+        ca = [a for a in anchors if c_lo - 0.05 <= round(a.y, 1) <= c_hi + 0.05]
+        x_count = len(set(round(a.x, 2) for a in ca))
+        if x_count < best_count:
+            best_count = x_count
+            best_cluster = (c_lo, c_hi, ca)
+
+    c_lo, c_hi, selected = best_cluster
+    print(f"[lyplex] {len(clusters)} staves detected; using y=[{c_lo},{c_hi}] "
+          f"({len(selected)} anchors, {best_count} beat groups, longest note values)")
+    return selected
+
 def _group_by_value(items, key_fn) -> list[list]:
     groups: list[list] = []
     seen: dict = {}
@@ -504,6 +542,7 @@ def build_timing_map(
     tempo_map: list[tuple[int, float]],
     ticks_per_beat: int,
 ) -> list[TimingEntry]:
+    anchors = _select_dominant_staff_anchors(anchors)
     # Group anchors by x (same beat moment)
     svg_groups = _group_by_value(anchors, key_fn=lambda a: round(a.x, 2))
     # Group MIDI note_ons by tick
