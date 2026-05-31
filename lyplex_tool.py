@@ -41,8 +41,9 @@ DEFAULT_HEIGHT = 1080
 @dataclass
 class TimingEntry:
     ms: float
-    x: float  # SVG viewBox units
-    y: float = 0.0  # SVG viewBox units (mean of beat group anchors)
+    x: float          # SVG viewBox units
+    y: float = 0.0    # SVG viewBox units
+    duration_ms: float = 0.0  # how long this note/chord sounds
 
 @dataclass
 class AnchorInfo:
@@ -410,14 +411,14 @@ def _tick_to_ms(tick: int, tempo_map: list[tuple[int, float, int]], ticks_per_be
 @dataclass
 class TrackNoteEvents:
     track_index: int
-    note_ons: list[tuple[int, int]]  # (tick, pitch)
+    note_ons: list[tuple[int, int, int]]  # (tick_on, pitch, duration_ticks)
     total_duration_ticks: int
 
 def _parse_midi_tracks(midi_file: mido.MidiFile) -> list[TrackNoteEvents]:
     results: list[TrackNoteEvents] = []
 
     for i, track in enumerate(midi_file.tracks):
-        note_ons: list[tuple[int, int]] = []
+        note_ons: list[tuple[int, int, int]] = []
         abs_tick = 0
         last_tick = 0
         active: dict[int, int] = {}  # pitch → on_tick
@@ -426,14 +427,23 @@ def _parse_midi_tracks(midi_file: mido.MidiFile) -> list[TrackNoteEvents]:
         for msg in track:
             abs_tick += msg.time
             if msg.type == "note_on" and msg.velocity > 0:
-                note_ons.append((abs_tick, msg.note))
                 active[msg.note] = abs_tick
             elif msg.type in ("note_off", "note_on") and msg.velocity == 0:
                 if msg.note in active:
-                    total_dur += abs_tick - active.pop(msg.note)
+                    on_tick = active.pop(msg.note)
+                    dur = abs_tick - on_tick
+                    note_ons.append((on_tick, msg.note, dur))
+                    total_dur += dur
             last_tick = abs_tick
 
+        # notes with no note_off (end of track)
+        for pitch, on_tick in active.items():
+            dur = max(1, last_tick - on_tick)
+            note_ons.append((on_tick, pitch, dur))
+            total_dur += dur
+
         if note_ons:
+            note_ons.sort(key=lambda e: e[0])
             results.append(TrackNoteEvents(
                 track_index=i,
                 note_ons=note_ons,
@@ -442,15 +452,25 @@ def _parse_midi_tracks(midi_file: mido.MidiFile) -> list[TrackNoteEvents]:
 
     return results
 
-def extract_timing_midi(midi_path: Path) -> tuple[list[tuple[int, int]], list[tuple[int, float, int]], int]:
+def _parse_time_signature(midi_file: mido.MidiFile) -> tuple[int, int]:
+    """Return (numerator, denominator) from first time_signature meta message."""
+    for track in midi_file.tracks:
+        for msg in track:
+            if msg.type == "time_signature":
+                return msg.numerator, msg.denominator
+    return 4, 4
+
+def extract_timing_midi(midi_path: Path) -> tuple[list[tuple[int, int]], list[tuple[int, float, int]], int, tuple[int, int]]:
     """
-    Returns (note_ons, tempo_map, ticks_per_beat).
+    Returns (note_ons, tempo_map, ticks_per_beat, time_sig).
     note_ons: [(tick, pitch), ...] from the staff with longest total duration.
     tempo_map: [(tick, ms, tempo_us), ...] checkpoints.
+    time_sig: (numerator, denominator)
     """
     midi_file = mido.MidiFile(str(midi_path))
     tempo_map = _build_tempo_map(midi_file)
     tracks = _parse_midi_tracks(midi_file)
+    time_sig = _parse_time_signature(midi_file)
 
     if not tracks:
         raise RuntimeError("No note events found in timing MIDI.")
@@ -459,7 +479,7 @@ def extract_timing_midi(midi_path: Path) -> tuple[list[tuple[int, int]], list[tu
     driving_track = max(tracks, key=lambda t: t.total_duration_ticks)
     note_ons = sorted(driving_track.note_ons, key=lambda e: e[0])
 
-    return note_ons, tempo_map, midi_file.ticks_per_beat
+    return note_ons, tempo_map, midi_file.ticks_per_beat, time_sig
 
 # ---------------------------------------------------------------------------
 # Beat group correlation → timing map
@@ -570,12 +590,60 @@ def build_timing_map(
     for i in range(n):
         max_anchor = max(svg_groups[i], key=lambda a: a.x)
         x = max_anchor.x  # rightmost anchor = main note position
-        y = max_anchor.y  # y of the same anchor (avoids blank-space mean across staves)
+        y = max_anchor.y
         tick = midi_groups[i][0][0]
         ms = _tick_to_ms(tick, tempo_map, ticks_per_beat)
-        timing_map.append(TimingEntry(ms=ms, x=x, y=y))
+        max_dur_ticks = max(e[2] for e in midi_groups[i])
+        off_ms = _tick_to_ms(tick + max_dur_ticks, tempo_map, ticks_per_beat)
+        timing_map.append(TimingEntry(ms=ms, x=x, y=y, duration_ms=off_ms - ms))
 
     return timing_map
+
+
+def _interp_timing_map(ms: float, timing_map: list[TimingEntry], ms_keys: list[float]) -> tuple[float, float]:
+    """Return (x, y) linearly interpolated from timing_map at ms."""
+    if ms <= timing_map[0].ms:
+        return timing_map[0].x, timing_map[0].y
+    if ms >= timing_map[-1].ms:
+        return timing_map[-1].x, timing_map[-1].y
+    i = bisect_left(ms_keys, ms) - 1
+    i = max(0, min(i, len(timing_map) - 2))
+    t0, x0, y0 = timing_map[i].ms, timing_map[i].x, timing_map[i].y
+    t1, x1, y1 = timing_map[i + 1].ms, timing_map[i + 1].x, timing_map[i + 1].y
+    progress = (ms - t0) / (t1 - t0) if t1 != t0 else 0.0
+    return x0 + (x1 - x0) * progress, y0 + (y1 - y0) * progress
+
+
+def build_bar_timing_map(
+    note_timing_map: list[TimingEntry],
+    tempo_map: list[tuple[int, float, int]],
+    ticks_per_beat: int,
+    time_sig: tuple[int, int] = (4, 4),
+) -> list[TimingEntry]:
+    """Downsample note-level timing map to bar boundaries.
+
+    One entry per bar start: x/y interpolated from note_timing_map.
+    Granularity = one scroll step per bar, regardless of note density.
+    """
+    numerator, denominator = time_sig
+    ticks_per_bar = int(round(ticks_per_beat * numerator * 4 / denominator))
+    if ticks_per_bar <= 0:
+        return note_timing_map
+
+    last_ms = note_timing_map[-1].ms
+    ms_keys = [e.ms for e in note_timing_map]
+
+    bar_entries: list[TimingEntry] = []
+    bar_tick = 0
+    while True:
+        bar_ms = _tick_to_ms(bar_tick, tempo_map, ticks_per_beat)
+        if bar_ms > last_ms + 500:
+            break
+        x, y = _interp_timing_map(bar_ms, note_timing_map, ms_keys)
+        bar_entries.append(TimingEntry(ms=bar_ms, x=x, y=y))
+        bar_tick += ticks_per_bar
+
+    return bar_entries if bar_entries else note_timing_map
 
 # ---------------------------------------------------------------------------
 # Scroll interpolation
@@ -660,7 +728,12 @@ def encode_mp4(
     atempo: float = 1.0,
     ffmpeg_exe: str | None = None,
     cursor_line: bool = False,
+    cursor_color: tuple[int, int, int] = (220, 50, 50),
+    cursor_width: int = 2,
     trail: bool = False,
+    note_highlight: bool = False,
+    highlight_map: list[TimingEntry] | None = None,
+    highlight_color: tuple[int, int, int] = (50, 120, 220),
     title_footer_overlay: Image.Image | None = None,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
@@ -690,10 +763,25 @@ def encode_mp4(
 
     ms_keys = [e.ms for e in timing_map]
     cx = int(width * CURSOR_POSITION)
-    # Pre-build the loop-invariant tint overlay (region left of cursor, semi-transparent blue)
+    HL_RADIUS = max(6, height // 90)
+
+    # Pre-build loop-invariant tint overlay (played region, semi-transparent blue)
     if trail:
         _tint_base = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         ImageDraw.Draw(_tint_base).rectangle([(0, 0), (cx - 1, height - 1)], fill=(100, 140, 220, 35))
+
+    # Note highlight setup
+    _hl_map = highlight_map if (note_highlight and highlight_map) else None
+    if _hl_map:
+        hl_ms_keys = [e.ms for e in _hl_map]
+        max_hl_dur = max((e.duration_ms for e in _hl_map), default=2000.0)
+        hl_r, hl_g, hl_b = highlight_color
+    else:
+        hl_ms_keys = None
+        max_hl_dur = 0.0
+
+    needs_overlay = trail or bool(_hl_map)
+
     try:
         for frame_n in range(n_frames):
             t_ms = frame_n / fps * 1000.0
@@ -709,36 +797,50 @@ def encode_mp4(
 
             frame = strip_img.crop((left, 0, right, height))
             if frame.width < width:
-                # pad right edge with white
                 padded = Image.new("RGB", (width, height), (255, 255, 255))
                 padded.paste(frame, (0, 0))
                 frame = padded
 
-            if trail or cursor_line:
-                if trail:
-                    overlay = _tint_base.copy()
+            if needs_overlay or cursor_line:
+                if needs_overlay:
+                    overlay = _tint_base.copy() if trail else Image.new("RGBA", (width, height), (0, 0, 0, 0))
                     ov = ImageDraw.Draw(overlay)
 
-                    # Dots: last TRAIL_DOTS past beat positions — bisect avoids O(n) scan
-                    i_trail = bisect_left(ms_keys, t_ms)
-                    past = timing_map[max(0, i_trail - TRAIL_DOTS):i_trail]
-                    n_past = len(past)
-                    for idx, entry in enumerate(past):
-                        ex_px = int(entry.x * px_per_svgu) - left
-                        ey_px = int(entry.y * px_per_svgu)
-                        if -TRAIL_DOT_RADIUS <= ex_px <= width + TRAIL_DOT_RADIUS:
-                            alpha = int(200 * (idx + 1) / n_past) if n_past else 0
-                            r = TRAIL_DOT_RADIUS
-                            ov.ellipse(
-                                [(ex_px - r, ey_px - r), (ex_px + r, ey_px + r)],
-                                fill=(220, 80, 50, alpha),
-                            )
+                    if trail:
+                        i_trail = bisect_left(ms_keys, t_ms)
+                        past = timing_map[max(0, i_trail - TRAIL_DOTS):i_trail]
+                        n_past = len(past)
+                        for idx, entry in enumerate(past):
+                            ex_px = int(entry.x * px_per_svgu) - left
+                            ey_px = int(entry.y * px_per_svgu)
+                            if -TRAIL_DOT_RADIUS <= ex_px <= width + TRAIL_DOT_RADIUS:
+                                alpha = int(200 * (idx + 1) / n_past) if n_past else 0
+                                r = TRAIL_DOT_RADIUS
+                                ov.ellipse(
+                                    [(ex_px - r, ey_px - r), (ex_px + r, ey_px + r)],
+                                    fill=(220, 80, 50, alpha),
+                                )
+
+                    if _hl_map and hl_ms_keys is not None:
+                        i_lo = max(0, bisect_left(hl_ms_keys, t_ms - max_hl_dur) - 1)
+                        for entry in _hl_map[i_lo:]:
+                            if entry.ms > t_ms:
+                                break
+                            if entry.duration_ms > 0 and entry.ms + entry.duration_ms > t_ms:
+                                ex_px = int(entry.x * px_per_svgu) - left
+                                ey_px = int(entry.y * px_per_svgu)
+                                if -HL_RADIUS * 2 <= ex_px <= width + HL_RADIUS * 2:
+                                    ov.ellipse(
+                                        [(ex_px - HL_RADIUS, ey_px - HL_RADIUS),
+                                         (ex_px + HL_RADIUS, ey_px + HL_RADIUS)],
+                                        fill=(hl_r, hl_g, hl_b, 150),
+                                    )
 
                     frame = Image.alpha_composite(frame.convert("RGBA"), overlay).convert("RGB")
 
                 if cursor_line:
                     draw = ImageDraw.Draw(frame)
-                    draw.line([(cx, 0), (cx, height - 1)], fill=(220, 50, 50), width=2)
+                    draw.line([(cx, 0), (cx, height - 1)], fill=cursor_color, width=cursor_width)
 
             if title_footer_overlay is not None:
                 frame = Image.alpha_composite(frame.convert("RGBA"), title_footer_overlay).convert("RGB")
@@ -768,9 +870,14 @@ def generate_mp4(
     ffmpeg_exe: str | None = None,
     fluidsynth_exe: str | None = None,
     cursor_line: bool = False,
+    cursor_color: tuple[int, int, int] = (220, 50, 50),
+    cursor_width: int = 2,
     trail: bool = False,
+    note_highlight: bool = False,
+    highlight_color: tuple[int, int, int] = (50, 120, 220),
     overlay_title: bool = False,
     overlay_footer: bool = False,
+    use_bar_timing: bool = True,
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -810,13 +917,20 @@ def generate_mp4(
             raise RuntimeError("No note anchors found in SVG. Check \\pointAndClickTypes injection.")
 
         print("[lyplex] parsing timing MIDI...")
-        note_ons, tempo_map, ticks_per_beat = extract_timing_midi(timing_midi_path)
+        note_ons, tempo_map, ticks_per_beat, time_sig = extract_timing_midi(timing_midi_path)
 
         # Timing map
         print("[lyplex] building timing map...")
-        timing_map = build_timing_map(anchors, note_ons, tempo_map, ticks_per_beat)
-        if not timing_map:
+        note_timing_map = build_timing_map(anchors, note_ons, tempo_map, ticks_per_beat)
+        if not note_timing_map:
             raise RuntimeError("Timing map is empty after correlation.")
+
+        if use_bar_timing:
+            print(f"[lyplex] building bar-level timing map (time sig {time_sig[0]}/{time_sig[1]})...")
+            timing_map = build_bar_timing_map(note_timing_map, tempo_map, ticks_per_beat, time_sig)
+            print(f"[lyplex] bar timing map: {len(timing_map)} bars")
+        else:
+            timing_map = note_timing_map
 
         if abs(tempo_multiplier - 1.0) > 1e-6:
             timing_map = [dc_replace(e, ms=e.ms / tempo_multiplier) for e in timing_map]
@@ -847,7 +961,12 @@ def generate_mp4(
             atempo=tempo_multiplier,
             ffmpeg_exe=ffmpeg_exe,
             cursor_line=cursor_line,
+            cursor_color=cursor_color,
+            cursor_width=cursor_width,
             trail=trail,
+            note_highlight=note_highlight,
+            highlight_map=note_timing_map,
+            highlight_color=highlight_color,
             title_footer_overlay=tf_overlay,
         )
 
@@ -875,6 +994,8 @@ if __name__ == "__main__":
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    parser.add_argument("--no-bar-timing", action="store_true",
+                        help="Use note-level timing instead of bar-level")
     args = parser.parse_args()
 
     generate_mp4(
@@ -884,4 +1005,5 @@ if __name__ == "__main__":
         width=args.width,
         height=args.height,
         fps=args.fps,
+        use_bar_timing=not args.no_bar_timing,
     )

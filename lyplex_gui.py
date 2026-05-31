@@ -171,6 +171,13 @@ class MainFrame(wx.Frame):
             grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
             return chk
 
+        def color_row(label: str, default_rgb: tuple, hint: str = "") -> wx.ColourPickerCtrl:
+            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            cp = wx.ColourPickerCtrl(panel, colour=wx.Colour(*default_rgb))
+            grid.Add(cp, 0)
+            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
+            return cp
+
         # --- file / folder rows ---
 
         self._ly_tc = file_row(
@@ -233,6 +240,18 @@ class MainFrame(wx.Frame):
 
         self._cursor_chk = chk_row(
             "Playback cursor:", "Show vertical cursor line")
+        self._cursor_color_cp = color_row(
+            "Cursor color:", (220, 50, 50))
+        grid.Add(wx.StaticText(panel, label="Cursor width (px):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._cursor_width_ctrl = wx.SpinCtrl(panel, min=1, max=8, initial=2, size=(60, -1))
+        grid.Add(self._cursor_width_ctrl)
+        grid.AddSpacer(0)
+
+        self._note_highlight_chk = chk_row(
+            "Note highlight:", "Flash active note/chord")
+        self._highlight_color_cp = color_row(
+            "Highlight color:", (50, 120, 220))
+
         self._trail_chk = chk_row(
             "Note trail:", "Show fading dot trail + played-region tint")
         self._title_overlay_chk = chk_row(
@@ -241,6 +260,9 @@ class MainFrame(wx.Frame):
         self._footer_overlay_chk = chk_row(
             "Footer overlay:", "Show copyright / tagline (fixed, does not scroll)",
             hint=r"(from \header in .ly)")
+        self._bar_timing_chk = chk_row(
+            "Bar timing:", "Scroll one step per bar (smoother for fast passages)")
+        self._bar_timing_chk.SetValue(True)
 
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
@@ -340,9 +362,16 @@ class MainFrame(wx.Frame):
 
         fps = self._fps_ctrl.GetValue()
         cursor_line = self._cursor_chk.GetValue()
+        c = self._cursor_color_cp.GetColour()
+        cursor_color = (c.Red(), c.Green(), c.Blue())
+        cursor_width = self._cursor_width_ctrl.GetValue()
+        note_highlight = self._note_highlight_chk.GetValue()
+        h = self._highlight_color_cp.GetColour()
+        highlight_color = (h.Red(), h.Green(), h.Blue())
         trail = self._trail_chk.GetValue()
         overlay_title = self._title_overlay_chk.GetValue()
         overlay_footer = self._footer_overlay_chk.GetValue()
+        use_bar_timing = self._bar_timing_chk.GetValue()
         lilypond_exe = self._lilypond_tc.GetValue().strip() or None
         ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
         fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
@@ -356,14 +385,20 @@ class MainFrame(wx.Frame):
         stream = _LogStream(self._log_newline, self._log_overwrite)
         threading.Thread(
             target=self._run_pipeline,
-            args=(ly, sf2, out_mp4, width, height, fps, tempo, cursor_line, trail,
-                  overlay_title, overlay_footer, lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
+            args=(ly, sf2, out_mp4, width, height, fps, tempo,
+                  cursor_line, cursor_color, cursor_width,
+                  note_highlight, highlight_color,
+                  trail, overlay_title, overlay_footer, use_bar_timing,
+                  lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
             daemon=True,
         ).start()
 
     def _run_pipeline(
-        self, ly, sf2, out_mp4, width, height, fps, tempo, cursor_line, trail,
-        overlay_title, overlay_footer, lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
+        self, ly, sf2, out_mp4, width, height, fps, tempo,
+        cursor_line, cursor_color, cursor_width,
+        note_highlight, highlight_color,
+        trail, overlay_title, overlay_footer, use_bar_timing,
+        lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
     ) -> None:
         old_out, old_err = sys.stdout, sys.stderr
         sys.stdout = stream
@@ -381,9 +416,14 @@ class MainFrame(wx.Frame):
                 ffmpeg_exe=ffmpeg_exe,
                 fluidsynth_exe=fluidsynth_exe,
                 cursor_line=cursor_line,
+                cursor_color=cursor_color,
+                cursor_width=cursor_width,
                 trail=trail,
+                note_highlight=note_highlight,
+                highlight_color=highlight_color,
                 overlay_title=overlay_title,
                 overlay_footer=overlay_footer,
+                use_bar_timing=use_bar_timing,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=out_mp4)
         except Exception as exc:
