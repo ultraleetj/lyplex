@@ -10,7 +10,6 @@ import math
 import os
 import re
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
@@ -19,7 +18,6 @@ import warnings
 from bisect import bisect_left
 from dataclasses import dataclass, replace as dc_replace
 from pathlib import Path
-from typing import Optional
 
 import mido
 from lxml import etree
@@ -1223,7 +1221,6 @@ def generate_mp4(
         print(f"[lyplex] done: {out_path}")
 
     finally:
-        import sys
         if sys.exc_info()[0] is None:
             shutil.rmtree(workdir, ignore_errors=True)
         else:
