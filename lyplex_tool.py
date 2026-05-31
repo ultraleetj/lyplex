@@ -320,8 +320,12 @@ def _accumulate_translate(element) -> tuple[float, float]:
 
 def _extract_anchors_from_root(root) -> list[AnchorInfo]:
     anchors: list[AnchorInfo] = []
-    for a in root.iter(f"{{{SVG_NS}}}a"):
-        href = a.get(f"{{{XLINK}}}href", "")
+    a_elements = list(root.iter(f"{{{SVG_NS}}}a")) or list(root.iter("a"))
+    print(f"[lyplex] SVG <a> elements found: {len(a_elements)}")
+    for a in a_elements:
+        href = (a.get(f"{{{XLINK}}}href", "")
+                or a.get("href", "")
+                or a.get("xlink:href", ""))
         if not href.startswith("textedit://"):
             continue
         # textedit://FILE:LINE:CHR:COL
@@ -801,7 +805,11 @@ def generate_mp4(
         print(f"[lyplex] done: {out_path}")
 
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        import sys
+        if sys.exc_info()[0] is None:
+            shutil.rmtree(workdir, ignore_errors=True)
+        else:
+            print(f"[lyplex] workdir preserved for inspection (error): {workdir}")
 
 
 # ---------------------------------------------------------------------------
