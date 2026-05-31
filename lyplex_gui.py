@@ -13,7 +13,7 @@ from pathlib import Path
 
 import wx
 
-from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ClickParams, generate_mp4
+from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ClickParams, WatermarkParams, generate_mp4
 
 HERE = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
 
@@ -142,7 +142,7 @@ class MetronomeDialog(wx.Dialog):
 class WatermarkDialog(wx.Dialog):
     _POSITIONS = ["BR", "BL", "TR", "TL"]
 
-    def __init__(self, parent, path: str, position: str, opacity: float):
+    def __init__(self, parent, params: WatermarkParams):
         super().__init__(parent, title="Watermark Settings",
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         panel = wx.Panel(self)
@@ -151,7 +151,7 @@ class WatermarkDialog(wx.Dialog):
 
         # Logo file picker
         grid.Add(wx.StaticText(panel, label="Logo file:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._path_tc = wx.TextCtrl(panel, value=path, name="Watermark logo file")
+        self._path_tc = wx.TextCtrl(panel, value=params.path, name="Watermark logo file")
         btn_browse = wx.Button(panel, label="Browse…", size=(70, -1))
         def _on_browse(_e):
             dlg = wx.FileDialog(
@@ -172,10 +172,7 @@ class WatermarkDialog(wx.Dialog):
                  0, wx.ALIGN_CENTER_VERTICAL)
 
         # Position
-        try:
-            pos_idx = self._POSITIONS.index(position)
-        except ValueError:
-            pos_idx = 0
+        pos_idx = next((i for i, p in enumerate(self._POSITIONS) if p == params.position), 0)
         grid.Add(wx.StaticText(panel, label="Position:"), 0, wx.ALIGN_CENTER_VERTICAL)
         self._pos_ch = wx.Choice(panel, choices=self._POSITIONS, name="Watermark position")
         self._pos_ch.SetSelection(pos_idx)
@@ -185,7 +182,7 @@ class WatermarkDialog(wx.Dialog):
         # Opacity
         grid.Add(wx.StaticText(panel, label="Opacity:"), 0, wx.ALIGN_CENTER_VERTICAL)
         self._opacity_ctrl = wx.SpinCtrlDouble(
-            panel, min=0.05, max=1.0, initial=opacity, inc=0.05, name="Watermark opacity")
+            panel, min=0.05, max=1.0, initial=params.opacity, inc=0.05, name="Watermark opacity")
         self._opacity_ctrl.SetDigits(2)
         grid.Add(self._opacity_ctrl, 0)
         grid.Add(wx.StaticText(panel, label="0.05 – 1.0"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -198,11 +195,11 @@ class WatermarkDialog(wx.Dialog):
         panel.SetSizer(root)
         root.Fit(self)
 
-    def get_values(self) -> tuple[str, str, float]:
-        return (
-            self._path_tc.GetValue().strip(),
-            self._pos_ch.GetStringSelection(),
-            self._opacity_ctrl.GetValue(),
+    def get_values(self) -> WatermarkParams:
+        return WatermarkParams(
+            path=self._path_tc.GetValue().strip(),
+            position=self._pos_ch.GetStringSelection(),
+            opacity=self._opacity_ctrl.GetValue(),
         )
 
 
@@ -251,9 +248,7 @@ class MainFrame(wx.Frame):
         self._click_a = ClickParams(freq_hz=1500.0, waveform="sine", duration_ms=20.0, amplitude=0.6)
         self._click_b = ClickParams(freq_hz=1000.0, waveform="sine", duration_ms=20.0, amplitude=0.4)
         self._count_in = 0
-        self._watermark_path = ""
-        self._watermark_pos = "BR"
-        self._watermark_opacity = 0.6
+        self._watermark = WatermarkParams()
         self._build_ui()
         self.CreateStatusBar()
         self.SetStatusText("Ready.")
@@ -609,9 +604,7 @@ class MainFrame(wx.Frame):
         click_b = self._click_b
         count_in_bars = self._count_in
         fade_frames = self._fade_frames_ctrl.GetValue()
-        watermark_path = self._watermark_path
-        watermark_pos = self._watermark_pos
-        watermark_opacity = self._watermark_opacity
+        watermark = self._watermark
         lilypond_exe = self._lilypond_tc.GetValue().strip() or None
         ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
         fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
@@ -631,7 +624,7 @@ class MainFrame(wx.Frame):
                   trail, overlay_title, overlay_footer,
                   use_bar_timing, bar_numbers, metronome,
                   click_a, click_b, count_in_bars, fade_frames,
-                  watermark_path, watermark_pos, watermark_opacity,
+                  watermark,
                   lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
             daemon=True,
         ).start()
@@ -643,10 +636,10 @@ class MainFrame(wx.Frame):
         dlg.Destroy()
 
     def _on_watermark_settings(self, _event) -> None:
-        dlg = WatermarkDialog(self, self._watermark_path, self._watermark_pos, self._watermark_opacity)
+        dlg = WatermarkDialog(self, self._watermark)
         if dlg.ShowModal() == wx.ID_OK:
-            self._watermark_path, self._watermark_pos, self._watermark_opacity = dlg.get_values()
-            name = Path(self._watermark_path).name if self._watermark_path else "(none)"
+            self._watermark = dlg.get_values()
+            name = Path(self._watermark.path).name if self._watermark.path else "(none)"
             self._watermark_summary.SetLabel(name)
         dlg.Destroy()
 
@@ -657,7 +650,7 @@ class MainFrame(wx.Frame):
         trail, overlay_title, overlay_footer,
         use_bar_timing, bar_numbers, metronome,
         click_a, click_b, count_in_bars, fade_frames,
-        watermark_path, watermark_pos, watermark_opacity,
+        watermark,
         lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
     ) -> None:
         old_out, old_err = sys.stdout, sys.stderr
@@ -690,9 +683,7 @@ class MainFrame(wx.Frame):
                 click_beat=click_b,
                 count_in_bars=count_in_bars,
                 fade_frames=fade_frames,
-                watermark_path=watermark_path,
-                watermark_position=watermark_pos,
-                watermark_opacity=watermark_opacity,
+                watermark=watermark,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=out_mp4)
         except Exception as exc:

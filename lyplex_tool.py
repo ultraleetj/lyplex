@@ -62,6 +62,13 @@ class ClickParams:
     duration_ms: float = 20.0
     amplitude: float   = 0.4
 
+@dataclass
+class WatermarkParams:
+    path: str = ""           # empty = no watermark
+    position: str = "BR"    # TL | TR | BL | BR
+    opacity: float = 0.6
+    max_height: int | None = None  # px; None → height // 8
+
 # ---------------------------------------------------------------------------
 # Preflight checks
 # ---------------------------------------------------------------------------
@@ -300,30 +307,21 @@ def _compose_corner_overlay(
 def build_watermark_overlay(
     width: int,
     height: int,
-    logo_path: str,
-    position: str = "BR",
-    opacity: float = 0.6,
-    max_height: int | None = None,
+    params: WatermarkParams,
 ) -> Image.Image | None:
-    """Return a fixed RGBA overlay with the logo pasted at a corner.
-
-    position: one of TL, TR, BL, BR (top/bottom-left/right).
-    opacity: 0.0–1.0 applied to logo alpha channel.
-    max_height: logo scaled so its height ≤ max_height px (default: height // 8).
-    Returns None if logo_path is empty or file not found.
-    """
-    if not logo_path:
+    """Return a fixed RGBA overlay with the logo pasted at a corner. None if no path or load fails."""
+    if not params.path:
         return None
 
-    max_h = max_height or max(20, height // 8)
-    logo = _load_logo(logo_path, max_h)
+    max_h = params.max_height or max(20, height // 8)
+    logo = _load_logo(params.path, max_h)
     if logo is None:
         return None
 
-    if opacity < 1.0 - 1e-6:
-        logo.putalpha(logo.getchannel('A').point(lambda v: int(v * opacity)))
+    if params.opacity < 1.0 - 1e-6:
+        logo.putalpha(logo.getchannel('A').point(lambda v: int(v * params.opacity)))
 
-    return _compose_corner_overlay(logo, width, height, position, max(8, height // 60))
+    return _compose_corner_overlay(logo, width, height, params.position, max(8, height // 60))
 
 # ---------------------------------------------------------------------------
 # LilyPond compile
@@ -1113,10 +1111,7 @@ def generate_mp4(
     use_bar_timing: bool = True,
     bar_numbers: bool = True,
     fade_frames: int = 0,
-    watermark_path: str = "",
-    watermark_position: str = "BR",
-    watermark_opacity: float = 0.6,
-    watermark_max_height: int | None = None,
+    watermark: WatermarkParams | None = None,
     metronome: bool = False,
     click_accent: ClickParams | None = None,
     click_beat: ClickParams | None = None,
@@ -1212,10 +1207,7 @@ def generate_mp4(
 
         # Build fixed overlays (done once, composited every frame)
         tf_overlay = build_title_footer_overlay(width, height, header, overlay_title, overlay_footer)
-        wm_overlay = build_watermark_overlay(
-            width, height, watermark_path, watermark_position,
-            watermark_opacity, watermark_max_height,
-        )
+        wm_overlay = build_watermark_overlay(width, height, watermark or WatermarkParams())
 
         # Encode
         print("[lyplex] encoding MP4...")
