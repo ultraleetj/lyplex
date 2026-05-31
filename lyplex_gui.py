@@ -205,7 +205,7 @@ class MainFrame(wx.Frame):
 
         self._dir_tc = dir_row(
             "Output folder:",
-            str(HERE),
+            str(HERE / "output"),
             hint="(where to save the MP4)")
 
         # --- numeric rows ---
