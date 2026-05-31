@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
+from dataclasses import dataclass
 from pathlib import Path
 
 import wx
@@ -41,6 +42,42 @@ def _parse_color(choice: wx.Choice, fallback: tuple[int, int, int]) -> tuple[int
     return COLOR_PRESETS[i][1] if 0 <= i < len(COLOR_PRESETS) else fallback
 
 
+def _spin_double(parent: wx.Window, lo: float, hi: float, val: float, inc: float, name: str) -> wx.SpinCtrlDouble:
+    c = wx.SpinCtrlDouble(parent, min=lo, max=hi, initial=val, inc=inc, name=name)
+    c.SetDigits(2)
+    return c
+
+
+@dataclass
+class PipelineConfig:
+    ly: str
+    sf2: str
+    out_mp4: str
+    width: int
+    height: int
+    fps: int
+    tempo: float
+    cursor_line: bool
+    cursor_color: tuple[int, int, int]
+    cursor_width: int
+    note_highlight: bool
+    highlight_color: tuple[int, int, int]
+    trail: bool
+    overlay_title: bool
+    overlay_footer: bool
+    use_bar_timing: bool
+    bar_numbers: bool
+    metronome: bool
+    click_a: ClickParams
+    click_b: ClickParams
+    count_in_bars: int
+    fade_frames: int
+    watermark: WatermarkParams
+    lilypond_exe: str | None
+    ffmpeg_exe: str | None
+    fluidsynth_exe: str | None
+
+
 # ---------------------------------------------------------------------------
 # Metronome settings dialog
 # ---------------------------------------------------------------------------
@@ -62,19 +99,6 @@ class MetronomeDialog(wx.Dialog):
             grid.AddSpacer(0)
             grid.AddSpacer(0)
 
-        def _spin(lo: int, hi: int, val: int, name: str) -> wx.SpinCtrl:
-            return wx.SpinCtrl(panel, min=lo, max=hi, initial=val, name=name)
-
-        def _choice(sel: int, name: str) -> wx.Choice:
-            ch = wx.Choice(panel, choices=self._WAVEFORMS, name=name)
-            ch.SetSelection(sel)
-            return ch
-
-        def _spind(lo: float, hi: float, val: float, inc: float, name: str) -> wx.SpinCtrlDouble:
-            c = wx.SpinCtrlDouble(panel, min=lo, max=hi, initial=val, inc=inc, name=name)
-            c.SetDigits(2)
-            return c
-
         def _row(label: str, ctrl, hint: str = "") -> None:
             grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(ctrl, 0, wx.EXPAND)
@@ -88,27 +112,29 @@ class MetronomeDialog(wx.Dialog):
                 return 0
 
         _section("Accent click  (beat 1)")
-        self._a_freq = _spin(100, 8000, int(click_a.freq_hz), "Accent frequency")
+        self._a_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_a.freq_hz), name="Accent frequency")
         _row("Frequency:", self._a_freq, "Hz")
-        self._a_wave = _choice(_wf_idx(click_a), "Accent waveform")
+        self._a_wave = wx.Choice(panel, choices=self._WAVEFORMS, name="Accent waveform")
+        self._a_wave.SetSelection(_wf_idx(click_a))
         _row("Waveform:", self._a_wave)
-        self._a_dur = _spin(5, 200, int(click_a.duration_ms), "Accent duration")
+        self._a_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_a.duration_ms), name="Accent duration")
         _row("Duration:", self._a_dur, "ms")
-        self._a_amp = _spind(0.05, 1.0, click_a.amplitude, 0.05, "Accent amplitude")
+        self._a_amp = _spin_double(panel, 0.05, 1.0, click_a.amplitude, 0.05, "Accent amplitude")
         _row("Amplitude:", self._a_amp, "0.05 – 1.0")
 
         _section("Beat click  (beats 2, 3, …)")
-        self._b_freq = _spin(100, 8000, int(click_b.freq_hz), "Beat frequency")
+        self._b_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_b.freq_hz), name="Beat frequency")
         _row("Frequency:", self._b_freq, "Hz")
-        self._b_wave = _choice(_wf_idx(click_b), "Beat waveform")
+        self._b_wave = wx.Choice(panel, choices=self._WAVEFORMS, name="Beat waveform")
+        self._b_wave.SetSelection(_wf_idx(click_b))
         _row("Waveform:", self._b_wave)
-        self._b_dur = _spin(5, 200, int(click_b.duration_ms), "Beat duration")
+        self._b_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_b.duration_ms), name="Beat duration")
         _row("Duration:", self._b_dur, "ms")
-        self._b_amp = _spind(0.05, 1.0, click_b.amplitude, 0.05, "Beat amplitude")
+        self._b_amp = _spin_double(panel, 0.05, 1.0, click_b.amplitude, 0.05, "Beat amplitude")
         _row("Amplitude:", self._b_amp, "0.05 – 1.0")
 
         _section("Count-in")
-        self._count_in_spin = _spin(0, 2, count_in, "Count-in bars")
+        self._count_in_spin = wx.SpinCtrl(panel, min=0, max=2, initial=count_in, name="Count-in bars")
         _row("Bars:", self._count_in_spin, "0 = no count-in")
 
         btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)
@@ -181,9 +207,7 @@ class WatermarkDialog(wx.Dialog):
 
         # Opacity
         grid.Add(wx.StaticText(panel, label="Opacity:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._opacity_ctrl = wx.SpinCtrlDouble(
-            panel, min=0.05, max=1.0, initial=params.opacity, inc=0.05, name="Watermark opacity")
-        self._opacity_ctrl.SetDigits(2)
+        self._opacity_ctrl = _spin_double(panel, 0.05, 1.0, params.opacity, 0.05, "Watermark opacity")
         grid.Add(self._opacity_ctrl, 0)
         grid.Add(wx.StaticText(panel, label="0.05 – 1.0"), 0, wx.ALIGN_CENTER_VERTICAL)
 
@@ -609,6 +633,19 @@ class MainFrame(wx.Frame):
         ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
         fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
 
+        config = PipelineConfig(
+            ly=ly, sf2=sf2, out_mp4=out_mp4,
+            width=width, height=height, fps=fps, tempo=tempo,
+            cursor_line=cursor_line, cursor_color=cursor_color, cursor_width=cursor_width,
+            note_highlight=note_highlight, highlight_color=highlight_color,
+            trail=trail, overlay_title=overlay_title, overlay_footer=overlay_footer,
+            use_bar_timing=use_bar_timing, bar_numbers=bar_numbers,
+            metronome=metronome, click_a=click_a, click_b=click_b,
+            count_in_bars=count_in_bars, fade_frames=fade_frames,
+            watermark=watermark,
+            lilypond_exe=lilypond_exe, ffmpeg_exe=ffmpeg_exe, fluidsynth_exe=fluidsynth_exe,
+        )
+
         self._log.Clear()
         self._overwriting_log_line = False
         self._btn_mp4.Disable()
@@ -618,14 +655,7 @@ class MainFrame(wx.Frame):
         stream = _LogStream(self._log_newline, self._log_overwrite)
         threading.Thread(
             target=self._run_pipeline,
-            args=(ly, sf2, out_mp4, width, height, fps, tempo,
-                  cursor_line, cursor_color, cursor_width,
-                  note_highlight, highlight_color,
-                  trail, overlay_title, overlay_footer,
-                  use_bar_timing, bar_numbers, metronome,
-                  click_a, click_b, count_in_bars, fade_frames,
-                  watermark,
-                  lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
+            args=(config, stream),
             daemon=True,
         ).start()
 
@@ -643,52 +673,43 @@ class MainFrame(wx.Frame):
             self._watermark_summary.SetLabel(name)
         dlg.Destroy()
 
-    def _run_pipeline(
-        self, ly, sf2, out_mp4, width, height, fps, tempo,
-        cursor_line, cursor_color, cursor_width,
-        note_highlight, highlight_color,
-        trail, overlay_title, overlay_footer,
-        use_bar_timing, bar_numbers, metronome,
-        click_a, click_b, count_in_bars, fade_frames,
-        watermark,
-        lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
-    ) -> None:
+    def _run_pipeline(self, config: PipelineConfig, stream) -> None:
         old_out, old_err = sys.stdout, sys.stderr
         sys.stdout = stream
         sys.stderr = stream
         try:
             generate_mp4(
-                ly_path=ly,
-                sf2_path=sf2,
-                out_path=out_mp4,
-                width=width,
-                height=height,
-                fps=fps,
-                tempo_multiplier=tempo,
-                lilypond_exe=lilypond_exe,
-                ffmpeg_exe=ffmpeg_exe,
-                fluidsynth_exe=fluidsynth_exe,
-                cursor_line=cursor_line,
-                cursor_color=cursor_color,
-                cursor_width=cursor_width,
-                trail=trail,
-                note_highlight=note_highlight,
-                highlight_color=highlight_color,
-                overlay_title=overlay_title,
-                overlay_footer=overlay_footer,
-                use_bar_timing=use_bar_timing,
-                bar_numbers=bar_numbers,
-                metronome=metronome,
-                click_accent=click_a,
-                click_beat=click_b,
-                count_in_bars=count_in_bars,
-                fade_frames=fade_frames,
-                watermark=watermark,
+                ly_path=config.ly,
+                sf2_path=config.sf2,
+                out_path=config.out_mp4,
+                width=config.width,
+                height=config.height,
+                fps=config.fps,
+                tempo_multiplier=config.tempo,
+                lilypond_exe=config.lilypond_exe,
+                ffmpeg_exe=config.ffmpeg_exe,
+                fluidsynth_exe=config.fluidsynth_exe,
+                cursor_line=config.cursor_line,
+                cursor_color=config.cursor_color,
+                cursor_width=config.cursor_width,
+                trail=config.trail,
+                note_highlight=config.note_highlight,
+                highlight_color=config.highlight_color,
+                overlay_title=config.overlay_title,
+                overlay_footer=config.overlay_footer,
+                use_bar_timing=config.use_bar_timing,
+                bar_numbers=config.bar_numbers,
+                metronome=config.metronome,
+                click_accent=config.click_a,
+                click_beat=config.click_b,
+                count_in_bars=config.count_in_bars,
+                fade_frames=config.fade_frames,
+                watermark=config.watermark,
             )
-            wx.CallAfter(self._pipeline_done, success=True, path=out_mp4)
+            wx.CallAfter(self._pipeline_done, success=True, path=config.out_mp4)
         except Exception as exc:
             wx.CallAfter(self._log_newline, f"\nERROR: {exc}")
-            wx.CallAfter(self._pipeline_done, success=False, path=out_mp4)
+            wx.CallAfter(self._pipeline_done, success=False, path=config.out_mp4)
         finally:
             sys.stdout = old_out
             sys.stderr = old_err

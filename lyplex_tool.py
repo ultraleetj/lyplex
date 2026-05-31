@@ -69,6 +69,11 @@ class WatermarkParams:
     opacity: float = 0.6
     max_height: int | None = None  # px; None → height // 8
 
+@dataclass
+class ClickResult:
+    wav_path: Path | None = None
+    count_in_ms: float = 0.0
+
 # ---------------------------------------------------------------------------
 # Preflight checks
 # ---------------------------------------------------------------------------
@@ -823,8 +828,8 @@ def render_click_wav(
     accent_params: ClickParams | None = None,
     beat_params: ClickParams | None = None,
     count_in_bars: int = 0,
-) -> float:
-    """Synthesize a click-track WAV.  Returns count-in duration in ms."""
+) -> ClickResult:
+    """Synthesize a click-track WAV.  Returns ClickResult with wav_path and count-in duration."""
     ap = accent_params or _DEFAULT_ACCENT
     bp = beat_params   or _DEFAULT_BEAT
 
@@ -876,7 +881,7 @@ def render_click_wav(
         wf.setframerate(_CLICK_SAMPLE_RATE)
         wf.writeframes(packed.tobytes())
 
-    return count_in_ms
+    return ClickResult(wav_path=out_path, count_in_ms=count_in_ms)
 
 
 # ---------------------------------------------------------------------------
@@ -944,10 +949,12 @@ def encode_mp4(
     title_footer_overlay: Image.Image | None = None,
     watermark_overlay: Image.Image | None = None,
     fade_frames: int = 0,
-    click_wav_path: Path | None = None,
-    count_in_ms: float = 0.0,
+    click_result: ClickResult | None = None,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
+
+    click_wav_path = click_result.wav_path if click_result else None
+    count_in_ms = click_result.count_in_ms if click_result else 0.0
 
     # Duration = count-in + last note ms + 2s tail
     duration_ms = count_in_ms + timing_map[-1].ms + 2000.0
@@ -1188,12 +1195,11 @@ def generate_mp4(
         render_audio_wav(audio_midi_path, sf2_path, wav_path, fluidsynth_exe)
 
         # Metronome click track
-        click_wav: Path | None = None
-        count_in_ms = 0.0
+        click_result: ClickResult | None = None
         if metronome:
             click_wav = Path(workdir) / "click.wav"
             print("[lyplex] synthesizing metronome click track...")
-            count_in_ms = render_click_wav(
+            click_result = render_click_wav(
                 tempo_map, ticks_per_beat, time_sig,
                 total_ms=note_timing_map[-1].ms + 2000.0,
                 out_path=click_wav,
@@ -1202,8 +1208,8 @@ def generate_mp4(
                 beat_params=click_beat,
                 count_in_bars=count_in_bars,
             )
-            if count_in_ms > 0:
-                print(f"[lyplex] count-in: {count_in_bars} bar(s) = {count_in_ms:.0f} ms")
+            if click_result.count_in_ms > 0:
+                print(f"[lyplex] count-in: {count_in_bars} bar(s) = {click_result.count_in_ms:.0f} ms")
 
         # Build fixed overlays (done once, composited every frame)
         tf_overlay = build_title_footer_overlay(width, height, header, overlay_title, overlay_footer)
@@ -1227,8 +1233,7 @@ def generate_mp4(
             title_footer_overlay=tf_overlay,
             watermark_overlay=wm_overlay,
             fade_frames=fade_frames,
-            click_wav_path=click_wav,
-            count_in_ms=count_in_ms,
+            click_result=click_result,
         )
 
         print(f"[lyplex] done: {out_path}")
