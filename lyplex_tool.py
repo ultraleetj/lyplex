@@ -4,12 +4,17 @@ lyplex_tool.py — core pipeline: LilyPond → SVG/MIDI → timing map → MP4
 
 from __future__ import annotations
 
+import array
+import io
+import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import wave
 import warnings
 from bisect import bisect_left
 from dataclasses import dataclass, replace as dc_replace
@@ -51,6 +56,13 @@ class AnchorInfo:
     y: float   # absolute SVG units
     line: int
     col: int
+
+@dataclass
+class ClickParams:
+    freq_hz: float  = 1000.0
+    waveform: str   = "sine"   # sine | square | triangle | saw
+    duration_ms: float = 20.0
+    amplitude: float   = 0.4
 
 # ---------------------------------------------------------------------------
 # Preflight checks
@@ -251,6 +263,63 @@ def build_title_footer_overlay(
         draw.text(((width - tw) // 2, height - band_h + pad), footer_text,
                   font=font, fill=(255, 255, 255, 200))
 
+    return overlay
+
+
+def build_watermark_overlay(
+    width: int,
+    height: int,
+    logo_path: str,
+    position: str = "BR",
+    opacity: float = 0.6,
+    max_height: int | None = None,
+) -> Image.Image | None:
+    """Return a fixed RGBA overlay with the logo pasted at a corner.
+
+    position: one of TL, TR, BL, BR (top/bottom-left/right).
+    opacity: 0.0–1.0 applied to logo alpha channel.
+    max_height: logo scaled so its height ≤ max_height px (default: height // 8).
+    Returns None if logo_path is empty or file not found.
+    """
+    if not logo_path:
+        return None
+
+    max_h = max_height or max(20, height // 8)
+
+    try:
+        if Path(logo_path).suffix.lower() == ".svg":
+            png_bytes = cairosvg.svg2png(url=logo_path, output_height=max_h)
+            logo = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        else:
+            logo = Image.open(logo_path).convert("RGBA")
+            if logo.height > max_h:
+                scale = max_h / logo.height
+                logo = logo.resize(
+                    (max(1, int(logo.width * scale)), max_h),
+                    Image.LANCZOS,
+                )
+    except Exception as exc:
+        print(f"[lyplex] warning: watermark '{logo_path}' failed to load: {exc}")
+        return None
+
+    if opacity < 1.0 - 1e-6:
+        logo.putalpha(logo.getchannel('A').point(lambda v: int(v * opacity)))
+
+    margin = max(8, height // 60)
+    lw, lh = logo.size
+
+    position = position.upper()
+    if position == "TL":
+        x, y = margin, margin
+    elif position == "TR":
+        x, y = width - lw - margin, margin
+    elif position == "BL":
+        x, y = margin, height - lh - margin
+    else:  # BR
+        x, y = width - lw - margin, height - lh - margin
+
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    overlay.paste(logo, (x, y), logo)
     return overlay
 
 # ---------------------------------------------------------------------------
@@ -714,6 +783,103 @@ def render_audio_wav(midi_path: Path, sf2_path: str, wav_path: Path, fluidsynth_
         raise RuntimeError(f"fluidsynth failed:\n{result.stderr}")
 
 # ---------------------------------------------------------------------------
+# Metronome click synthesis
+# ---------------------------------------------------------------------------
+
+_CLICK_SAMPLE_RATE = 44100
+
+_DEFAULT_ACCENT = ClickParams(freq_hz=1500.0, waveform="sine", duration_ms=20.0, amplitude=0.6)
+_DEFAULT_BEAT   = ClickParams(freq_hz=1000.0, waveform="sine", duration_ms=20.0, amplitude=0.4)
+
+
+def _make_click_burst(p: ClickParams) -> list[float]:
+    """Pre-render one click burst as a float list (reused for every beat of the same type)."""
+    n = max(1, int(p.duration_ms / 1000.0 * _CLICK_SAMPLE_RATE))
+    phase_step = 2 * math.pi * p.freq_hz / _CLICK_SAMPLE_RATE
+    sr = _CLICK_SAMPLE_RATE
+    burst = []
+    for k in range(n):
+        env = math.sin(math.pi * k / n)
+        phase = phase_step * k
+        if p.waveform == "square":
+            s = 1.0 if math.sin(phase) >= 0 else -1.0
+        elif p.waveform == "triangle":
+            s = 2 / math.pi * math.asin(math.sin(phase))
+        elif p.waveform == "saw":
+            s = 2 * ((p.freq_hz * k / sr) % 1.0) - 1.0
+        else:
+            s = math.sin(phase)
+        burst.append(p.amplitude * env * s)
+    return burst
+
+
+def render_click_wav(
+    tempo_map: list[tuple[int, float, int]],
+    ticks_per_beat: int,
+    time_sig: tuple[int, int],
+    total_ms: float,
+    out_path: Path,
+    tempo_multiplier: float = 1.0,
+    accent_params: ClickParams | None = None,
+    beat_params: ClickParams | None = None,
+    count_in_bars: int = 0,
+) -> float:
+    """Synthesize a click-track WAV.  Returns count-in duration in ms."""
+    ap = accent_params or _DEFAULT_ACCENT
+    bp = beat_params   or _DEFAULT_BEAT
+
+    numerator, denominator = time_sig
+    ticks_per_bar = int(ticks_per_beat * numerator * 4 / denominator)
+
+    def t2ms(tick: int) -> float:
+        return _tick_to_ms(tick, tempo_map, ticks_per_beat)
+
+    bar_ms = t2ms(ticks_per_bar) / tempo_multiplier if count_in_bars > 0 else 0.0
+    count_in_ms = count_in_bars * bar_ms
+
+    last_tick = max(tempo_map[-1][0], int(total_ms / 1000.0 * 2 * ticks_per_beat))
+
+    clicks: list[tuple[float, bool]] = []
+
+    if count_in_bars > 0:
+        count_in_ticks = count_in_bars * ticks_per_bar
+        for t in range(count_in_ticks, 0, -ticks_per_beat):
+            t_ms = count_in_ms - t2ms(t) / tempo_multiplier
+            clicks.append((t_ms, t % ticks_per_bar == 0))
+
+    for t in range(0, last_tick + ticks_per_beat, ticks_per_beat):
+        t_ms = t2ms(t) / tempo_multiplier + count_in_ms
+        if t_ms > total_ms + count_in_ms + 500:
+            break
+        clicks.append((t_ms, t % ticks_per_bar == 0))
+
+    wav_total_ms = total_ms + count_in_ms
+    n_samples = int((wav_total_ms / 1000.0 + 1.0) * _CLICK_SAMPLE_RATE)
+
+    burst_a = _make_click_burst(ap)
+    burst_b = _make_click_burst(bp)
+    buf = array.array('f', bytes(n_samples * 4))
+
+    for t_ms, is_accent in clicks:
+        burst = burst_a if is_accent else burst_b
+        start = int(t_ms / 1000.0 * _CLICK_SAMPLE_RATE)
+        for k, s in enumerate(burst):
+            idx = start + k
+            if idx >= n_samples:
+                break
+            buf[idx] += s
+
+    packed = array.array('h', (max(-32768, min(32767, int(s * 32767))) for s in buf))
+    with wave.open(str(out_path), 'w') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(_CLICK_SAMPLE_RATE)
+        wf.writeframes(packed.tobytes())
+
+    return count_in_ms
+
+
+# ---------------------------------------------------------------------------
 # MP4 export
 # ---------------------------------------------------------------------------
 
@@ -750,16 +916,21 @@ def encode_mp4(
     highlight_map: list[TimingEntry] | None = None,
     highlight_color: tuple[int, int, int] = (50, 120, 220),
     title_footer_overlay: Image.Image | None = None,
+    watermark_overlay: Image.Image | None = None,
     fade_frames: int = 0,
+    click_wav_path: Path | None = None,
+    count_in_ms: float = 0.0,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
 
-    # Duration = last note ms + 2s tail
-    duration_ms = timing_map[-1].ms + 2000.0
+    # Duration = count-in + last note ms + 2s tail
+    duration_ms = count_in_ms + timing_map[-1].ms + 2000.0
     n_frames = int(duration_ms / 1000.0 * fps) + 1
 
     audio_filters = _atempo_filter(atempo) if abs(atempo - 1.0) > 1e-6 else None
 
+    # Music WAV delayed by count_in_ms; click WAV already starts at t=0
+    delay_ms = int(count_in_ms)
     ffmpeg_cmd = [
         ffmpeg, "-y",
         "-framerate", str(fps),
@@ -767,13 +938,26 @@ def encode_mp4(
         "-vcodec", "ppm",
         "-i", "pipe:0",
         "-i", str(wav_path),
-        "-c:v", "libx264",
-        "-c:a", "aac",
-        "-pix_fmt", "yuv420p",
     ]
-    if audio_filters:
+    if click_wav_path is not None:
+        ffmpeg_cmd += ["-i", str(click_wav_path)]
+        music_chain = f"[1:a]adelay={delay_ms}|{delay_ms}[music]"
+        if audio_filters:
+            music_chain += f";[music]{audio_filters}[musicf]"
+            mix_in = "[musicf][2:a]"
+        else:
+            mix_in = "[music][2:a]"
+        afilter = f"{music_chain};{mix_in}amix=inputs=2:duration=longest:normalize=0"
+        ffmpeg_cmd += ["-filter_complex", afilter]
+    elif delay_ms > 0:
+        music_chain = f"[1:a]adelay={delay_ms}|{delay_ms}"
+        if audio_filters:
+            music_chain += f",{audio_filters}"
+        ffmpeg_cmd += ["-filter_complex", music_chain]
+    elif audio_filters:
         ffmpeg_cmd += ["-filter:a", audio_filters]
-    ffmpeg_cmd += ["-shortest", str(out_path)]
+    ffmpeg_cmd += ["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                   "-shortest", str(out_path)]
 
     proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
 
@@ -800,7 +984,7 @@ def encode_mp4(
 
     try:
         for frame_n in range(n_frames):
-            t_ms = frame_n / fps * 1000.0
+            t_ms = frame_n / fps * 1000.0 - count_in_ms
             offset_svgu = scroll_offset_at(t_ms, timing_map, width, ms_keys)
             offset_px = int(offset_svgu * px_per_svgu)
 
@@ -861,6 +1045,9 @@ def encode_mp4(
             if title_footer_overlay is not None:
                 frame = Image.alpha_composite(frame.convert("RGBA"), title_footer_overlay).convert("RGB")
 
+            if watermark_overlay is not None:
+                frame = Image.alpha_composite(frame.convert("RGBA"), watermark_overlay).convert("RGB")
+
             if fade_frames > 0:
                 if frame_n < fade_frames:
                     alpha = frame_n / fade_frames
@@ -907,6 +1094,14 @@ def generate_mp4(
     use_bar_timing: bool = True,
     bar_numbers: bool = True,
     fade_frames: int = 0,
+    watermark_path: str = "",
+    watermark_position: str = "BR",
+    watermark_opacity: float = 0.6,
+    watermark_max_height: int | None = None,
+    metronome: bool = False,
+    click_accent: ClickParams | None = None,
+    click_beat: ClickParams | None = None,
+    count_in_bars: int = 0,  # 0-2
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -978,8 +1173,30 @@ def generate_mp4(
         print("[lyplex] rendering audio...")
         render_audio_wav(audio_midi_path, sf2_path, wav_path, fluidsynth_exe)
 
-        # Build fixed title/footer overlay (done once, composited every frame)
+        # Metronome click track
+        click_wav: Path | None = None
+        count_in_ms = 0.0
+        if metronome:
+            click_wav = Path(workdir) / "click.wav"
+            print("[lyplex] synthesizing metronome click track...")
+            count_in_ms = render_click_wav(
+                tempo_map, ticks_per_beat, time_sig,
+                total_ms=note_timing_map[-1].ms + 2000.0,
+                out_path=click_wav,
+                tempo_multiplier=tempo_multiplier,
+                accent_params=click_accent,
+                beat_params=click_beat,
+                count_in_bars=count_in_bars,
+            )
+            if count_in_ms > 0:
+                print(f"[lyplex] count-in: {count_in_bars} bar(s) = {count_in_ms:.0f} ms")
+
+        # Build fixed overlays (done once, composited every frame)
         tf_overlay = build_title_footer_overlay(width, height, header, overlay_title, overlay_footer)
+        wm_overlay = build_watermark_overlay(
+            width, height, watermark_path, watermark_position,
+            watermark_opacity, watermark_max_height,
+        )
 
         # Encode
         print("[lyplex] encoding MP4...")
@@ -997,7 +1214,10 @@ def generate_mp4(
             highlight_map=note_timing_map,
             highlight_color=highlight_color,
             title_footer_overlay=tf_overlay,
+            watermark_overlay=wm_overlay,
             fade_frames=fade_frames,
+            click_wav_path=click_wav,
+            count_in_ms=count_in_ms,
         )
 
         print(f"[lyplex] done: {out_path}")

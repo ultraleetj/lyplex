@@ -13,7 +13,7 @@ from pathlib import Path
 
 import wx
 
-from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, generate_mp4
+from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ClickParams, generate_mp4
 
 HERE = Path(__file__).parent
 
@@ -301,11 +301,63 @@ class MainFrame(wx.Frame):
         self._bar_numbers_chk = chk_row(
             "Bar numbers:", "Show bar number above every bar line")
         self._bar_numbers_chk.SetValue(True)
+        self._metronome_chk = chk_row(
+            "Metronome click:", "Mix synthesized click track into audio (accent on beat 1)")
+
+        _WAVEFORMS = ["sine", "square", "triangle", "saw"]
+
+        def click_row(label: str, default_freq: int, default_amp: float) -> tuple:
+            """Add a 3-col row for one click type; return (freq_ctrl, wave_ctrl, dur_ctrl, amp_ctrl)."""
+            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            inner = wx.BoxSizer(wx.HORIZONTAL)
+            freq_ctrl = wx.SpinCtrl(panel, min=100, max=8000, initial=default_freq, size=(65, -1))
+            wave_ctrl = wx.Choice(panel, choices=_WAVEFORMS)
+            wave_ctrl.SetSelection(0)
+            dur_ctrl  = wx.SpinCtrl(panel, min=5, max=200, initial=20, size=(50, -1))
+            amp_ctrl  = wx.SpinCtrlDouble(panel, min=0.05, max=1.0, initial=default_amp, inc=0.05, size=(58, -1))
+            amp_ctrl.SetDigits(2)
+            for w, lbl in ((freq_ctrl, "Hz"), (wave_ctrl, None), (dur_ctrl, "ms"), (amp_ctrl, "vol")):
+                inner.Add(w, 0, wx.RIGHT, 2)
+                if lbl:
+                    inner.Add(wx.StaticText(panel, label=lbl), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+            grid.Add(inner, 1, wx.EXPAND)
+            grid.AddSpacer(0)
+            return freq_ctrl, wave_ctrl, dur_ctrl, amp_ctrl
+
+        (self._click_a_freq, self._click_a_wave,
+         self._click_a_dur,  self._click_a_amp) = click_row("Click accent (beat 1):", 1500, 0.6)
+        (self._click_b_freq, self._click_b_wave,
+         self._click_b_dur,  self._click_b_amp) = click_row("Click beat:", 1000, 0.4)
+
+        grid.Add(wx.StaticText(panel, label="Count-in bars:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._count_in_ctrl = wx.SpinCtrl(panel, min=0, max=2, initial=0, size=(55, -1))
+        grid.Add(self._count_in_ctrl)
+        grid.Add(wx.StaticText(panel, label="(0 = no count-in)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
         grid.Add(wx.StaticText(panel, label="Fade in/out (frames):"), 0, wx.ALIGN_CENTER_VERTICAL)
         self._fade_frames_ctrl = wx.SpinCtrl(panel, min=0, max=120, initial=0, size=(60, -1))
         grid.Add(self._fade_frames_ctrl)
         grid.Add(wx.StaticText(panel, label="(0 = no fade, 15 = 0.5s at 30fps)"), 0, wx.ALIGN_CENTER_VERTICAL)
+
+        self._watermark_tc = file_row(
+            "Watermark logo:",
+            "Images (*.svg;*.png;*.jpg;*.jpeg)|*.svg;*.png;*.jpg;*.jpeg|All files (*.*)|*.*",
+            hint="(blank = no watermark)")
+
+        grid.Add(wx.StaticText(panel, label="Watermark position:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._watermark_pos_ctrl = wx.Choice(panel, choices=["BR", "BL", "TR", "TL"])
+        self._watermark_pos_ctrl.SetSelection(0)
+        wm_pos_sz = wx.BoxSizer(wx.HORIZONTAL)
+        wm_pos_sz.Add(self._watermark_pos_ctrl, 0)
+        grid.Add(wm_pos_sz, 1, wx.EXPAND)
+        grid.AddSpacer(0)
+
+        grid.Add(wx.StaticText(panel, label="Watermark opacity:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._watermark_opacity_ctrl = wx.SpinCtrlDouble(
+            panel, min=0.05, max=1.0, initial=0.6, inc=0.05, size=(70, -1))
+        self._watermark_opacity_ctrl.SetDigits(2)
+        grid.Add(self._watermark_opacity_ctrl)
+        grid.AddSpacer(0)
 
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
@@ -414,7 +466,24 @@ class MainFrame(wx.Frame):
         overlay_footer = self._footer_overlay_chk.GetValue()
         use_bar_timing = self._bar_timing_chk.GetValue()
         bar_numbers = self._bar_numbers_chk.GetValue()
+        metronome = self._metronome_chk.GetValue()
+        click_a = ClickParams(
+            freq_hz=self._click_a_freq.GetValue(),
+            waveform=self._click_a_wave.GetStringSelection(),
+            duration_ms=self._click_a_dur.GetValue(),
+            amplitude=self._click_a_amp.GetValue(),
+        )
+        click_b = ClickParams(
+            freq_hz=self._click_b_freq.GetValue(),
+            waveform=self._click_b_wave.GetStringSelection(),
+            duration_ms=self._click_b_dur.GetValue(),
+            amplitude=self._click_b_amp.GetValue(),
+        )
+        count_in_bars = self._count_in_ctrl.GetValue()
         fade_frames = self._fade_frames_ctrl.GetValue()
+        watermark_path = self._watermark_tc.GetValue().strip()
+        watermark_pos = self._watermark_pos_ctrl.GetStringSelection()
+        watermark_opacity = self._watermark_opacity_ctrl.GetValue()
         lilypond_exe = self._lilypond_tc.GetValue().strip() or None
         ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
         fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
@@ -432,7 +501,9 @@ class MainFrame(wx.Frame):
                   cursor_line, cursor_color, cursor_width,
                   note_highlight, highlight_color,
                   trail, overlay_title, overlay_footer,
-                  use_bar_timing, bar_numbers, fade_frames,
+                  use_bar_timing, bar_numbers, metronome,
+                  click_a, click_b, count_in_bars, fade_frames,
+                  watermark_path, watermark_pos, watermark_opacity,
                   lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
             daemon=True,
         ).start()
@@ -442,7 +513,9 @@ class MainFrame(wx.Frame):
         cursor_line, cursor_color, cursor_width,
         note_highlight, highlight_color,
         trail, overlay_title, overlay_footer,
-        use_bar_timing, bar_numbers, fade_frames,
+        use_bar_timing, bar_numbers, metronome,
+        click_a, click_b, count_in_bars, fade_frames,
+        watermark_path, watermark_pos, watermark_opacity,
         lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
     ) -> None:
         old_out, old_err = sys.stdout, sys.stderr
@@ -470,7 +543,14 @@ class MainFrame(wx.Frame):
                 overlay_footer=overlay_footer,
                 use_bar_timing=use_bar_timing,
                 bar_numbers=bar_numbers,
+                metronome=metronome,
+                click_accent=click_a,
+                click_beat=click_b,
+                count_in_bars=count_in_bars,
                 fade_frames=fade_frames,
+                watermark_path=watermark_path,
+                watermark_position=watermark_pos,
+                watermark_opacity=watermark_opacity,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=out_mp4)
         except Exception as exc:
