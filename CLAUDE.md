@@ -294,8 +294,8 @@ Patched `.ly` files written to `tempfile.mkdtemp()`. LilyPond run in that dir �
 **`\pointAndClickTypes #'note-event` injection:** insert after the `\version "..."` line.
 Must be top-level, not inside `\score {}` or `\book {}`. Regex: find `\version "..."` line, append after it.
 
-**LilyPond output naming:** single-page output → `<basename>.svg` (no page suffix).
-With `page-count = 1` paper setting we always get one file.
+**LilyPond output naming:** SVG output always appends `-N` page suffix → `<basename>-1.svg`.
+MIDI output → `<basename>.midi` (no suffix). With `page-count = 1` we always get one SVG file.
 
 ---
 
