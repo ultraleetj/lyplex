@@ -264,6 +264,39 @@ def build_title_footer_overlay(
     return overlay
 
 
+def _load_logo(logo_path: str, max_h: int) -> Image.Image | None:
+    """Load SVG or raster logo, scale to max_h, convert to RGBA. Returns None on failure."""
+    try:
+        if Path(logo_path).suffix.lower() == ".svg":
+            png_bytes = cairosvg.svg2png(url=logo_path, output_height=max_h)
+            return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        logo = Image.open(logo_path).convert("RGBA")
+        if logo.height > max_h:
+            scale = max_h / logo.height
+            logo = logo.resize((max(1, int(logo.width * scale)), max_h), Image.LANCZOS)
+        return logo
+    except Exception as exc:
+        print(f"[lyplex] warning: watermark '{logo_path}' failed to load: {exc}")
+        return None
+
+
+def _compose_corner_overlay(
+    logo: Image.Image,
+    width: int,
+    height: int,
+    position: str,
+    margin: int,
+) -> Image.Image:
+    """Paste logo onto a transparent canvas at the named corner (TL/TR/BL/BR)."""
+    lw, lh = logo.size
+    pos = position.upper()
+    x = margin if "L" in pos else width - lw - margin
+    y = margin if "T" in pos else height - lh - margin
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    overlay.paste(logo, (x, y), logo)
+    return overlay
+
+
 def build_watermark_overlay(
     width: int,
     height: int,
@@ -283,36 +316,14 @@ def build_watermark_overlay(
         return None
 
     max_h = max_height or max(20, height // 8)
-
-    try:
-        if Path(logo_path).suffix.lower() == ".svg":
-            png_bytes = cairosvg.svg2png(url=logo_path, output_height=max_h)
-            logo = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-        else:
-            logo = Image.open(logo_path).convert("RGBA")
-            if logo.height > max_h:
-                scale = max_h / logo.height
-                logo = logo.resize(
-                    (max(1, int(logo.width * scale)), max_h),
-                    Image.LANCZOS,
-                )
-    except Exception as exc:
-        print(f"[lyplex] warning: watermark '{logo_path}' failed to load: {exc}")
+    logo = _load_logo(logo_path, max_h)
+    if logo is None:
         return None
 
     if opacity < 1.0 - 1e-6:
         logo.putalpha(logo.getchannel('A').point(lambda v: int(v * opacity)))
 
-    margin = max(8, height // 60)
-    lw, lh = logo.size
-
-    position = position.upper()
-    x = margin if "L" in position else width - lw - margin
-    y = margin if "T" in position else height - lh - margin
-
-    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    overlay.paste(logo, (x, y), logo)
-    return overlay
+    return _compose_corner_overlay(logo, width, height, position, max(8, height // 60))
 
 # ---------------------------------------------------------------------------
 # LilyPond compile
