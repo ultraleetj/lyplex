@@ -252,10 +252,14 @@ def _compile_lilypond(patched_source: str, basename: str, workdir: str, lilypond
 def compile_svg(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
     patched = patch_ly_svg(source)
     _compile_lilypond(patched, "score-svg", workdir, lilypond_exe)
-    svg_path = Path(workdir) / "score-svg.svg"
-    if not svg_path.exists():
-        raise RuntimeError(f"LilyPond did not produce {svg_path}")
-    return svg_path
+    # LilyPond SVG always appends -N page suffix; try suffix first, then bare name
+    svg_path_paged = Path(workdir) / "score-svg-1.svg"
+    svg_path_bare  = Path(workdir) / "score-svg.svg"
+    if svg_path_paged.exists():
+        return svg_path_paged
+    if svg_path_bare.exists():
+        return svg_path_bare
+    raise RuntimeError(f"LilyPond did not produce {svg_path_paged} or {svg_path_bare}")
 
 def compile_timing_midi(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
     patched = patch_ly_timing_midi(source)
