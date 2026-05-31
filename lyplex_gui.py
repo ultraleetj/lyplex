@@ -15,7 +15,7 @@ import wx
 
 from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ClickParams, generate_mp4
 
-HERE = Path(__file__).parent
+HERE = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
 
 def _default(rel: str) -> str:
     """Return absolute path for a bundled file if it exists, else empty string."""
@@ -35,11 +35,10 @@ COLOR_PRESETS: list[tuple[str, tuple[int, int, int]]] = [
     ("Pink",   (240, 100, 160)),
 ]
 _PRESET_NAMES = [name for name, _ in COLOR_PRESETS]
-_PRESET_RGBS  = [rgb  for _, rgb  in COLOR_PRESETS]
 
 def _parse_color(choice: wx.Choice, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
     i = choice.GetSelection()
-    return _PRESET_RGBS[i] if 0 <= i < len(_PRESET_RGBS) else fallback
+    return COLOR_PRESETS[i][1] if 0 <= i < len(COLOR_PRESETS) else fallback
 
 
 # ---------------------------------------------------------------------------
@@ -363,10 +362,9 @@ class MainFrame(wx.Frame):
             return chk
 
         def color_row(label: str, default_rgb: tuple, hint: str = "") -> wx.Choice:
-            try:
-                default_idx = _PRESET_RGBS.index(default_rgb)
-            except ValueError:
-                default_idx = 0
+            default_idx = next(
+                (i for i, (_, rgb) in enumerate(COLOR_PRESETS) if rgb == default_rgb), 0
+            )
             grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             ch = wx.Choice(panel, choices=_PRESET_NAMES, name=label.rstrip(":"))
             ch.SetSelection(default_idx)
@@ -374,8 +372,8 @@ class MainFrame(wx.Frame):
             swatch.SetBackgroundColour(wx.Colour(*default_rgb))
             def _update_swatch(_e, _ch=ch, _sw=swatch):
                 i = _ch.GetSelection()
-                if 0 <= i < len(_PRESET_RGBS):
-                    _sw.SetBackgroundColour(wx.Colour(*_PRESET_RGBS[i]))
+                if 0 <= i < len(COLOR_PRESETS):
+                    _sw.SetBackgroundColour(wx.Colour(*COLOR_PRESETS[i][1]))
                     _sw.Refresh()
             ch.Bind(wx.EVT_CHOICE, _update_swatch)
             sz = wx.BoxSizer(wx.HORIZONTAL)
