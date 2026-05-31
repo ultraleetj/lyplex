@@ -90,6 +90,10 @@ def _strip_ties(source: str) -> str:
 def _strip_unfold_repeats(source: str) -> str:
     return re.sub(r"\\unfoldRepeats\b", "", source)
 
+def _strip_book_output_name(source: str) -> str:
+    # Remove \bookOutputName "..." so LilyPond uses our patched filename, not the original.
+    return re.sub(r'\\bookOutputName\s+"[^"]*"', "", source)
+
 def _inject_point_and_click_types(source: str) -> str:
     """Insert \pointAndClickTypes #'note-event after the \version line."""
     def replacer(m):
@@ -111,20 +115,22 @@ def _add_strip_paper(source: str) -> str:
     return source + paper
 
 def patch_ly_svg(source: str) -> str:
-    s = _strip_ties(source)
+    s = _strip_book_output_name(source)
+    s = _strip_ties(s)
     s = _inject_point_and_click_types(s)
     s = _add_strip_paper(s)
     return s
 
 def patch_ly_timing_midi(source: str) -> str:
-    s = _strip_ties(source)
+    s = _strip_book_output_name(source)
+    s = _strip_ties(s)
     s = _strip_unfold_repeats(s)
     s = _add_strip_paper(s)
     return s
 
 def patch_ly_audio_midi(source: str) -> str:
-    # original source — only add strip paper
-    return _add_strip_paper(source)
+    s = _strip_book_output_name(source)
+    return _add_strip_paper(s)
 
 def _has_unfold_repeats(source: str) -> bool:
     return bool(re.search(r"\\unfoldRepeats\b", source))
