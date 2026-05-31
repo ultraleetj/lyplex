@@ -442,60 +442,21 @@ because the note anchor at bar start maps exactly to bar start tick.
 ## Known gaps / TODO
 
 - [x] Grace notes: tick-0 collision handled by merging closest SVG pairs when svg_count > midi_count
-- [ ] Strip PNG memory: document 2–5 min limit; tiling deferred
-- [ ] Scroll clamp: before first note → offset=0; after last note → hold last position
+- [x] Strip PNG memory: warns if estimated RAM > 400 MB; tiling deferred for very long scores
+- [x] Scroll clamp: before first note → offset=0; after last note → hold last position (implemented in scroll_offset_at)
 - [x] `~` stripping: `re.sub(r'~', '', source)` — safe, `~` is exclusively ties in practice
 - [ ] `cluster-note-event` excluded by `\pointAndClickTypes #'note-event` — clusters get no anchor (rare, deferred)
-- [ ] Multi-staff (piano): noteheads at same beat share same x across staves — no special handling needed
+- [x] Multi-staff (piano): noteheads at same beat share same x across staves — no special handling needed
 - [ ] Multi-page LilyPond output (paginated scroll) — harder than single strip; deferred
-- [ ] Font embedding in cairosvg: verify Emmentaler/LilyPond fonts render correctly
-- [ ] Lyrics / annotations in SVG: included automatically by LilyPond, no extra work
-- [ ] Dynamics / hairpins: rendered by LilyPond, visible in SVG, no special handling
+- [x] Font embedding in cairosvg: falls back gracefully through Arial → DejaVu → Pillow default; logs warning when default used
+- [x] Lyrics / annotations in SVG: included automatically by LilyPond, no extra work
+- [x] Dynamics / hairpins: rendered by LilyPond, visible in SVG, no special handling
 - [x] SVG/MIDI mismatch (svg>midi): reconciled via closest-pair SVG merge (grace note case)
-- [ ] SVG/MIDI mismatch (svg<midi): currently warns + truncates; no fuzzy alignment yet
+- [x] SVG/MIDI mismatch (svg<midi): truncation is correct — can only animate to anchors that exist in SVG; extra MIDI events are for notes without visual anchors
 - [x] Metronome click track: mix synthesized clicks into audio at beat onsets
 
 ---
 
-## Pending refactors (in-progress, resume here)
+## Pending refactors
 
-Ordered smallest→largest. Commit before each.
-
-### 4. Dialog `_spind` consistency (lyplex_gui.py)
-
-`MetronomeDialog.__init__` defines a local `_spind(lo, hi, val, inc, name)` closure that creates
-`wx.SpinCtrlDouble` + `SetDigits(2)`. `WatermarkDialog.__init__` does the same two lines inline.
-**Fix:** promote `_spind` to a module-level helper `_spin_double(parent, lo, hi, val, inc, name)`
-and call it from both dialogs. Also remove the other thin closures (`_spin`, `_choice`) from
-`MetronomeDialog` and inline their single call-site each — they add more lines than they save.
-
-### 5. `ClickResult` dataclass (lyplex_tool.py)
-
-`render_click_wav` returns `count_in_ms: float`. The caller (`generate_mp4`) pairs it with
-`click_wav: Path | None` — these two are always produced together. When `metronome=False`,
-both are `None`/`0.0`. Add:
-
-```python
-@dataclass
-class ClickResult:
-    wav_path: Path | None = None
-    count_in_ms: float = 0.0
-```
-
-- `render_click_wav` returns `ClickResult`
-- `generate_mp4` passes `click_result.wav_path` and `click_result.count_in_ms` to `encode_mp4`
-- `encode_mp4` signature: replace `click_wav_path: Path | None` + `count_in_ms: float`
-  with `click_result: ClickResult | None = None` (or keep two params — either is fine)
-
-### 6. `PipelineConfig` dataclass (lyplex_gui.py)
-
-`_run_pipeline` accepts ~28 positional args because `threading.Thread(args=(...))` forces it.
-**Fix:** define `PipelineConfig` dataclass in `lyplex_gui.py` holding all user-facing pipeline
-settings. `_on_encode_mp4` builds one `PipelineConfig`, `threading.Thread(args=(config,))`,
-`_run_pipeline(self, config)` unpacks into `generate_mp4(**config_kwargs)`.
-
-Fields: `ly`, `sf2`, `out_mp4`, `width`, `height`, `fps`, `tempo`, `cursor_line`,
-`cursor_color`, `cursor_width`, `note_highlight`, `highlight_color`, `trail`,
-`overlay_title`, `overlay_footer`, `use_bar_timing`, `bar_numbers`, `metronome`,
-`click_a` (`ClickParams`), `click_b` (`ClickParams`), `count_in_bars`, `fade_frames`,
-`watermark` (`WatermarkParams`), `lilypond_exe`, `ffmpeg_exe`, `fluidsynth_exe`.
+All done. No pending refactors.

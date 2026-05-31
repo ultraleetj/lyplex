@@ -209,6 +209,7 @@ def _get_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
                 return ImageFont.truetype(str(path), size)
             except Exception:
                 pass
+    print(f"[lyplex] WARNING: no TrueType font found at size {size}; overlay text will use Pillow bitmap fallback.")
     return ImageFont.load_default(size=size)
 
 # ---------------------------------------------------------------------------
@@ -1185,6 +1186,13 @@ def generate_mp4(
 
         # Render strip
         strip_png = Path(workdir) / "strip.png"
+        _svg_w_mm = _parse_mm(svg_root.get("width", "0mm"))
+        _svg_h_mm = max(_parse_mm(svg_root.get("height", "1mm")), 1.0)
+        _strip_w_px = int(_svg_w_mm / _svg_h_mm * height)
+        _strip_ram_mb = _strip_w_px * height * 3 / (1024 * 1024)
+        if _strip_ram_mb > 400:
+            print(f"[lyplex] WARNING: estimated strip PNG ~{_strip_ram_mb:.0f} MB "
+                  f"({_strip_w_px}×{height}px). Very long score — may exhaust RAM.")
         print(f"[lyplex] rendering strip PNG at {render_dpi:.1f} dpi...")
         render_strip_png(svg_path, render_dpi, strip_png)
         strip_img = Image.open(str(strip_png)).convert("RGB")
