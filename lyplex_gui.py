@@ -22,6 +22,11 @@ def _default(rel: str) -> str:
     p = HERE / rel
     return str(p) if p.exists() else ""
 
+def _parse_color(tc: wx.TextCtrl, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Parse hex or CSS color name from a TextCtrl; return fallback on invalid input."""
+    col = wx.Colour(tc.GetValue().strip())
+    return (col.Red(), col.Green(), col.Blue()) if col.IsOk() else fallback
+
 
 # ---------------------------------------------------------------------------
 # Log stream — redirects print() to the log widget, handles \r progress lines
@@ -171,12 +176,24 @@ class MainFrame(wx.Frame):
             grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
             return chk
 
-        def color_row(label: str, default_rgb: tuple, hint: str = "") -> wx.ColourPickerCtrl:
+        def color_row(label: str, default_rgb: tuple, hint: str = "") -> wx.TextCtrl:
+            r, g, b = default_rgb
             grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            cp = wx.ColourPickerCtrl(panel, colour=wx.Colour(*default_rgb))
-            grid.Add(cp, 0)
+            tc = wx.TextCtrl(panel, value=f"#{r:02X}{g:02X}{b:02X}", size=(80, -1))
+            swatch = wx.Panel(panel, size=(20, 20))
+            swatch.SetBackgroundColour(wx.Colour(r, g, b))
+            def _update_swatch(_e, _tc=tc, _sw=swatch):
+                col = wx.Colour(_tc.GetValue().strip())
+                if col.IsOk():
+                    _sw.SetBackgroundColour(col)
+                    _sw.Refresh()
+            tc.Bind(wx.EVT_TEXT, _update_swatch)
+            sz = wx.BoxSizer(wx.HORIZONTAL)
+            sz.Add(tc, 0, wx.ALIGN_CENTER_VERTICAL)
+            sz.Add(swatch, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 4)
+            grid.Add(sz, 0)
             grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
-            return cp
+            return tc
 
         # --- file / folder rows ---
 
@@ -370,12 +387,10 @@ class MainFrame(wx.Frame):
 
         fps = self._fps_ctrl.GetValue()
         cursor_line = self._cursor_chk.GetValue()
-        c = self._cursor_color_cp.GetColour()
-        cursor_color = (c.Red(), c.Green(), c.Blue())
+        cursor_color = _parse_color(self._cursor_color_cp, (220, 50, 50))
         cursor_width = self._cursor_width_ctrl.GetValue()
         note_highlight = self._note_highlight_chk.GetValue()
-        h = self._highlight_color_cp.GetColour()
-        highlight_color = (h.Red(), h.Green(), h.Blue())
+        highlight_color = _parse_color(self._highlight_color_cp, (50, 120, 220))
         trail = self._trail_chk.GetValue()
         overlay_title = self._title_overlay_chk.GetValue()
         overlay_footer = self._footer_overlay_chk.GetValue()
