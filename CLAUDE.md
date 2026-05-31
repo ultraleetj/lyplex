@@ -23,7 +23,7 @@ External binaries: `lilypond`, `ffmpeg`, `fluidsynth` (audio) — must be on PAT
 
 ```
 score.ly
-  ↓ lilypond -dsvg -dpoint-and-click
+  ↓ lilypond --svg -dpoint-and-click
 score.svg  +  score-timing.midi  +  score-audio.midi
   ↓ lxml (SVG parse)       ↓ mido (MIDI parse)
 note anchors + x-coords    note_on events + tick→ms timing
@@ -39,10 +39,10 @@ timing_map: [ {ms: N, x: PX}, ... ]
 ## LilyPond compile flags
 
 ```bash
-lilypond -dsvg -dpoint-and-click score.ly
+lilypond --svg -dpoint-and-click score.ly
 ```
 
-- `-dsvg` — SVG output
+- `--svg` — SVG output
 - `-dpoint-and-click` — embeds `textedit://FILEPATH:LINE:COL:ENDCOL` on every note element in SVG
 - LilyPond embeds full absolute paths in textedit:// URIs — no special handling needed on Windows
 
