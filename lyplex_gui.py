@@ -112,9 +112,9 @@ class MainFrame(wx.Frame):
             grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
             return tc
 
-        def dir_row(label: str, hint: str = "") -> wx.TextCtrl:
+        def dir_row(label: str, default: str = "", hint: str = "") -> wx.TextCtrl:
             lbl = wx.StaticText(panel, label=label)
-            tc  = wx.TextCtrl(panel)
+            tc  = wx.TextCtrl(panel, value=default)
             btn = wx.Button(panel, label="Browse…", size=(70, -1))
             def on_browse(_e, _tc=tc):
                 dlg = wx.DirDialog(self)
@@ -184,9 +184,11 @@ class MainFrame(wx.Frame):
             _default("soundfonts/GeneralUser-GS.sf2"),
             hint="(instrument samples for audio)")
 
+        _default_lily = r"C:\Program Files\lilypond-2.24.4\bin\lilypond.exe"
         self._lilypond_tc = file_row(
             "LilyPond binary:",
             "Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            _default_lily if Path(_default_lily).exists() else "",
             hint="(blank = use system PATH)")
 
         self._ffmpeg_tc = file_row(
@@ -203,6 +205,7 @@ class MainFrame(wx.Frame):
 
         self._dir_tc = dir_row(
             "Output folder:",
+            str(HERE),
             hint="(where to save the MP4)")
 
         # --- numeric rows ---
