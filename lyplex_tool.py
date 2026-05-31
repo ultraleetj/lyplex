@@ -244,22 +244,33 @@ def _compile_lilypond(patched_source: str, basename: str, workdir: str, lilypond
         capture_output=True,
         text=True,
     )
+    if result.stdout.strip():
+        print(result.stdout.rstrip())
+    if result.stderr.strip():
+        print(result.stderr.rstrip())
     if result.returncode != 0:
         raise RuntimeError(
-            f"LilyPond compilation failed:\n{result.stderr}"
+            f"LilyPond compilation failed (exit {result.returncode})"
         )
 
 def compile_svg(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
     patched = patch_ly_svg(source)
     _compile_lilypond(patched, "score-svg", workdir, lilypond_exe)
-    # LilyPond SVG always appends -N page suffix; try suffix first, then bare name
-    svg_path_paged = Path(workdir) / "score-svg-1.svg"
-    svg_path_bare  = Path(workdir) / "score-svg.svg"
-    if svg_path_paged.exists():
-        return svg_path_paged
-    if svg_path_bare.exists():
-        return svg_path_bare
-    raise RuntimeError(f"LilyPond did not produce {svg_path_paged} or {svg_path_bare}")
+    # LilyPond names output after the .ly basename, but \bookOutputName can override it.
+    # Glob for any SVG produced (exclude the patched source file itself).
+    svgs = [f for f in sorted(Path(workdir).glob("*.svg")) if f.stem != "score-svg"]
+    if not svgs:
+        # fallback: maybe it IS named score-svg
+        svgs = list(Path(workdir).glob("*.svg"))
+    if svgs:
+        if len(svgs) > 1:
+            print(f"[lyplex] WARNING: multiple SVGs found, using {svgs[0].name}")
+        return svgs[0]
+    files = sorted(Path(workdir).iterdir())
+    listing = "\n  ".join(f.name for f in files) or "(empty)"
+    raise RuntimeError(
+        f"LilyPond did not produce SVG.\nWorkdir contents:\n  {listing}"
+    )
 
 def compile_timing_midi(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
     patched = patch_ly_timing_midi(source)
