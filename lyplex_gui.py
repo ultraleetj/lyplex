@@ -263,6 +263,14 @@ class MainFrame(wx.Frame):
         self._bar_timing_chk = chk_row(
             "Bar timing:", "Scroll one step per bar (smoother for fast passages)")
         self._bar_timing_chk.SetValue(True)
+        self._bar_numbers_chk = chk_row(
+            "Bar numbers:", "Show bar number above every bar line")
+        self._bar_numbers_chk.SetValue(True)
+
+        grid.Add(wx.StaticText(panel, label="Fade in/out (frames):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._fade_frames_ctrl = wx.SpinCtrl(panel, min=0, max=120, initial=0, size=(60, -1))
+        grid.Add(self._fade_frames_ctrl)
+        grid.Add(wx.StaticText(panel, label="(0 = no fade, 15 = 0.5s at 30fps)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
@@ -372,6 +380,8 @@ class MainFrame(wx.Frame):
         overlay_title = self._title_overlay_chk.GetValue()
         overlay_footer = self._footer_overlay_chk.GetValue()
         use_bar_timing = self._bar_timing_chk.GetValue()
+        bar_numbers = self._bar_numbers_chk.GetValue()
+        fade_frames = self._fade_frames_ctrl.GetValue()
         lilypond_exe = self._lilypond_tc.GetValue().strip() or None
         ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
         fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
@@ -388,7 +398,8 @@ class MainFrame(wx.Frame):
             args=(ly, sf2, out_mp4, width, height, fps, tempo,
                   cursor_line, cursor_color, cursor_width,
                   note_highlight, highlight_color,
-                  trail, overlay_title, overlay_footer, use_bar_timing,
+                  trail, overlay_title, overlay_footer,
+                  use_bar_timing, bar_numbers, fade_frames,
                   lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream),
             daemon=True,
         ).start()
@@ -397,7 +408,8 @@ class MainFrame(wx.Frame):
         self, ly, sf2, out_mp4, width, height, fps, tempo,
         cursor_line, cursor_color, cursor_width,
         note_highlight, highlight_color,
-        trail, overlay_title, overlay_footer, use_bar_timing,
+        trail, overlay_title, overlay_footer,
+        use_bar_timing, bar_numbers, fade_frames,
         lilypond_exe, ffmpeg_exe, fluidsynth_exe, stream
     ) -> None:
         old_out, old_err = sys.stdout, sys.stderr
@@ -424,6 +436,8 @@ class MainFrame(wx.Frame):
                 overlay_title=overlay_title,
                 overlay_footer=overlay_footer,
                 use_bar_timing=use_bar_timing,
+                bar_numbers=bar_numbers,
+                fade_frames=fade_frames,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=out_mp4)
         except Exception as exc:
