@@ -243,7 +243,7 @@ def _compile_lilypond(patched_source: str, basename: str, workdir: str, lilypond
     ly_file.write_text(patched_source, encoding="utf-8")
 
     lilypond = _require_binary("lilypond", lilypond_exe)
-    cmd = [lilypond, "-dsvg", "-dpoint-and-click", str(ly_file)]
+    cmd = [lilypond, "--svg", "-dpoint-and-click", str(ly_file)]
     result = subprocess.run(
         cmd,
         cwd=workdir,
