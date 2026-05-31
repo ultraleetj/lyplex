@@ -318,6 +318,16 @@ def _accumulate_translate(element) -> tuple[float, float]:
         node = node.getparent()
     return x_total, y_total
 
+def _first_child_translate(element) -> tuple[float, float]:
+    """LilyPond 2.24: <a> directly contains <g transform="translate(x,y)">.
+    Return translate of first child <g>; fall back to ancestor walk."""
+    for child in element:
+        transform = child.get("transform", "")
+        m = re.search(r"translate\(\s*([+-]?\d*\.?\d+)\s*(?:,\s*([+-]?\d*\.?\d+)\s*)?\)", transform)
+        if m:
+            return float(m.group(1)), float(m.group(2)) if m.group(2) else 0.0
+    return _accumulate_translate(element)
+
 def _extract_anchors_from_root(root) -> list[AnchorInfo]:
     anchors: list[AnchorInfo] = []
     a_elements = list(root.iter(f"{{{SVG_NS}}}a")) or list(root.iter("a"))
@@ -337,7 +347,7 @@ def _extract_anchors_from_root(root) -> list[AnchorInfo]:
             col = int(parts[2])
         except ValueError:
             continue
-        x, y = _accumulate_translate(a)
+        x, y = _first_child_translate(a)
         anchors.append(AnchorInfo(x=x, y=y, line=line, col=col))
     anchors.sort(key=lambda a: a.x)
     return anchors
