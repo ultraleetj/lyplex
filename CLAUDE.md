@@ -384,7 +384,7 @@ def render_click_wav(beat_ms_list, accented_indices, out_path):
 
 | File | Status |
 |------|--------|
-| `lyplex_tool.py` | Done — full pipeline, cursor line + trail overlay, CLI entry point |
+| `lyplex_tool.py` | Done — full pipeline, cursor line + trail overlay, bar-level timing, CLI entry point |
 | `lyplex_gui.py` | Done — wxPython GUI, cursor/trail checkboxes, background thread, CR log |
 | `lyplex_web.py` | Not started (low priority) |
 
@@ -392,11 +392,9 @@ def render_click_wav(beat_ms_list, accented_indices, out_path):
 - `cursor_line=True` — 2px red vertical line at 45% viewport width each frame
 - `trail=True` — semi-transparent blue tint over played region + fading red dots at past TRAIL_DOTS notehead positions; dots use bisect for O(log n) per-frame lookup; tint overlay pre-built outside loop
 
-**Next task:** defineScrollingTask — see section below.
-
 ---
 
-## defineScrollingTask — bar-based timing map
+## defineScrollingTask — bar-based timing map (IMPLEMENTED)
 
 ### Problem with current anchor-based approach
 
@@ -405,41 +403,39 @@ to the MIDI driving track (longest total duration). Works for chord names + melo
 Open edge case: a staff with 32nd-note runs → MIDI picks it (most total duration) →
 SVG also picks it → scroll twitches on every 32nd note.
 
-### Proposed solution: bar-based timing
+### Solution implemented: Option C (hybrid snap)
 
-Use **bar start positions** as scroll anchors instead of note anchors.
-- Naturally granular: one scroll step per bar regardless of note density
-- Eliminates all staff-selection complexity, grace-note reconciliation, mismatch warnings
-- Works for sparse, dense, runs, rests — anything
+**Option B (`\pointAndClickTypes #'bar-event`) is not viable.**
+`lily/bar-engraver.cc` line 530: `bar_ = make_item("BarLine", SCM_EOL)` — BarLine grob
+created with no event cause. `grob-cause` in `scm/output-svg.scm` checks
+`(ly:grob-property grob 'cause)` → always empty for BarLine → no anchor ever emitted.
 
-### Two sub-problems
+**Option C (hybrid snap) is implemented.**
 
-**1. Bar timing from MIDI — easy, pieces already exist**
-- Parse `time_signature` meta from MIDI track 0 → `beats_per_bar`
-- Use existing `_build_tempo_map` + `ticks_per_beat`
-- Every `ticks_per_beat × beats_per_bar` ticks = one bar start
-- Convert to ms list via existing `_tick_to_ms`
+Pipeline:
+1. Build note-level timing_map as before (existing `build_timing_map`)
+2. Parse `time_signature` meta from timing MIDI → `(numerator, denominator)`
+3. Compute bar start ticks: `0, ticks_per_bar, 2×ticks_per_bar, ...`  
+   where `ticks_per_bar = ticks_per_beat × numerator × 4 / denominator`
+4. For each bar tick → ms via `_tick_to_ms`; x,y via linear interpolation from note-level map
+5. Result: bar-level `timing_map` with one entry per bar
 
-**2. Bar x-positions from SVG — three options, needs decision**
+Functions added:
+- `_parse_time_signature(midi_file) → (int, int)` — reads first `time_signature` meta
+- `_interp_timing_map(ms, timing_map, ms_keys) → (x, y)` — linear interp at arbitrary ms
+- `build_bar_timing_map(note_timing_map, tempo_map, ticks_per_beat, time_sig) → list[TimingEntry]`
 
-| Option | How | Risk |
-|--------|-----|------|
-| A. Geometric detection | Scan SVG for thin vertical paths (aspect > 10:1, spans staff height) | Fragile — stems look similar |
-| B. `\pointAndClickTypes` on bar events | Inject `#'bar-check-event` alongside `#'note-event` in patched SVG | Needs verification in `upstream/lilypond/scm/define-event-classes.scm` — bar lines are grobs, may not be supported |
-| C. Hybrid snap | Keep note anchors, snap each SVG group to nearest bar boundary using MIDI bar ticks | Safe fallback, no new SVG parsing |
+`extract_timing_midi` now returns 4-tuple: `(note_ons, tempo_map, ticks_per_beat, time_sig)`.
 
-**Recommended first step:** check `upstream/lilypond/scm/define-event-classes.scm` for
-a bar-line-compatible event type usable with `\pointAndClickTypes`. Also check
-`input/regression/point-and-click-types.ly` upstream for examples.
-If Option B works → clean, use it. If not → implement Option C (hybrid snap).
+`generate_mp4` has new param `use_bar_timing: bool = True` (default on).
+CLI: `--no-bar-timing` flag to revert to note-level.
 
-### Current state (as of session end)
+### Known limitation
 
-- `_select_dominant_staff_anchors` works and is committed (branch `master`)
-- Test score `examples/de conversa em conversa melodia.ly` produces clean output:
-  2 staves detected, y=[13,13] (chord names, 44 groups) matched to 44 MIDI groups
-- No mismatch warnings in current run
-- The 32nd-note open question is the motivation for bar-based approach
+Bar x-positions are interpolated from note anchors — no true SVG bar-line geometry used.
+This works well when notes are dense (interpolation is close to actual bar line x).
+For bars with only long notes (whole notes, multi-measure rests), x interpolation is still correct
+because the note anchor at bar start maps exactly to bar start tick.
 
 ---
 
