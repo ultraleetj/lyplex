@@ -22,10 +22,24 @@ def _default(rel: str) -> str:
     p = HERE / rel
     return str(p) if p.exists() else ""
 
-def _parse_color(tc: wx.TextCtrl, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Parse hex or CSS color name from a TextCtrl; return fallback on invalid input."""
-    col = wx.Colour(tc.GetValue().strip())
-    return (col.Red(), col.Green(), col.Blue()) if col.IsOk() else fallback
+COLOR_PRESETS: list[tuple[str, tuple[int, int, int]]] = [
+    ("Red",    (220,  50,  50)),
+    ("Blue",   ( 50, 120, 220)),
+    ("Green",  ( 50, 180,  80)),
+    ("Yellow", (240, 200,  30)),
+    ("Cyan",   ( 40, 200, 220)),
+    ("Orange", (240, 130,  40)),
+    ("White",  (255, 255, 255)),
+    ("Black",  (  0,   0,   0)),
+    ("Purple", (160,  60, 200)),
+    ("Pink",   (240, 100, 160)),
+]
+_PRESET_NAMES = [name for name, _ in COLOR_PRESETS]
+_PRESET_RGBS  = [rgb  for _, rgb  in COLOR_PRESETS]
+
+def _parse_color(choice: wx.Choice, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+    i = choice.GetSelection()
+    return _PRESET_RGBS[i] if 0 <= i < len(_PRESET_RGBS) else fallback
 
 
 # ---------------------------------------------------------------------------
@@ -176,24 +190,28 @@ class MainFrame(wx.Frame):
             grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
             return chk
 
-        def color_row(label: str, default_rgb: tuple, hint: str = "") -> wx.TextCtrl:
-            r, g, b = default_rgb
+        def color_row(label: str, default_rgb: tuple, hint: str = "") -> wx.Choice:
+            try:
+                default_idx = _PRESET_RGBS.index(default_rgb)
+            except ValueError:
+                default_idx = 0
             grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            tc = wx.TextCtrl(panel, value=f"#{r:02X}{g:02X}{b:02X}", size=(80, -1))
+            ch = wx.Choice(panel, choices=_PRESET_NAMES)
+            ch.SetSelection(default_idx)
             swatch = wx.Panel(panel, size=(20, 20))
-            swatch.SetBackgroundColour(wx.Colour(r, g, b))
-            def _update_swatch(_e, _tc=tc, _sw=swatch):
-                col = wx.Colour(_tc.GetValue().strip())
-                if col.IsOk():
-                    _sw.SetBackgroundColour(col)
+            swatch.SetBackgroundColour(wx.Colour(*default_rgb))
+            def _update_swatch(_e, _ch=ch, _sw=swatch):
+                i = _ch.GetSelection()
+                if 0 <= i < len(_PRESET_RGBS):
+                    _sw.SetBackgroundColour(wx.Colour(*_PRESET_RGBS[i]))
                     _sw.Refresh()
-            tc.Bind(wx.EVT_TEXT, _update_swatch)
+            ch.Bind(wx.EVT_CHOICE, _update_swatch)
             sz = wx.BoxSizer(wx.HORIZONTAL)
-            sz.Add(tc, 0, wx.ALIGN_CENTER_VERTICAL)
+            sz.Add(ch, 0, wx.ALIGN_CENTER_VERTICAL)
             sz.Add(swatch, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 4)
             grid.Add(sz, 0)
             grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
-            return tc
+            return ch
 
         # --- file / folder rows ---
 
