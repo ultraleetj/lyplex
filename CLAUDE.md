@@ -454,3 +454,48 @@ because the note anchor at bar start maps exactly to bar start tick.
 - [x] SVG/MIDI mismatch (svg>midi): reconciled via closest-pair SVG merge (grace note case)
 - [ ] SVG/MIDI mismatch (svg<midi): currently warns + truncates; no fuzzy alignment yet
 - [x] Metronome click track: mix synthesized clicks into audio at beat onsets
+
+---
+
+## Pending refactors (in-progress, resume here)
+
+Ordered smallest→largest. Commit before each.
+
+### 4. Dialog `_spind` consistency (lyplex_gui.py)
+
+`MetronomeDialog.__init__` defines a local `_spind(lo, hi, val, inc, name)` closure that creates
+`wx.SpinCtrlDouble` + `SetDigits(2)`. `WatermarkDialog.__init__` does the same two lines inline.
+**Fix:** promote `_spind` to a module-level helper `_spin_double(parent, lo, hi, val, inc, name)`
+and call it from both dialogs. Also remove the other thin closures (`_spin`, `_choice`) from
+`MetronomeDialog` and inline their single call-site each — they add more lines than they save.
+
+### 5. `ClickResult` dataclass (lyplex_tool.py)
+
+`render_click_wav` returns `count_in_ms: float`. The caller (`generate_mp4`) pairs it with
+`click_wav: Path | None` — these two are always produced together. When `metronome=False`,
+both are `None`/`0.0`. Add:
+
+```python
+@dataclass
+class ClickResult:
+    wav_path: Path | None = None
+    count_in_ms: float = 0.0
+```
+
+- `render_click_wav` returns `ClickResult`
+- `generate_mp4` passes `click_result.wav_path` and `click_result.count_in_ms` to `encode_mp4`
+- `encode_mp4` signature: replace `click_wav_path: Path | None` + `count_in_ms: float`
+  with `click_result: ClickResult | None = None` (or keep two params — either is fine)
+
+### 6. `PipelineConfig` dataclass (lyplex_gui.py)
+
+`_run_pipeline` accepts ~28 positional args because `threading.Thread(args=(...))` forces it.
+**Fix:** define `PipelineConfig` dataclass in `lyplex_gui.py` holding all user-facing pipeline
+settings. `_on_encode_mp4` builds one `PipelineConfig`, `threading.Thread(args=(config,))`,
+`_run_pipeline(self, config)` unpacks into `generate_mp4(**config_kwargs)`.
+
+Fields: `ly`, `sf2`, `out_mp4`, `width`, `height`, `fps`, `tempo`, `cursor_line`,
+`cursor_color`, `cursor_width`, `note_highlight`, `highlight_color`, `trail`,
+`overlay_title`, `overlay_footer`, `use_bar_timing`, `bar_numbers`, `metronome`,
+`click_a` (`ClickParams`), `click_b` (`ClickParams`), `count_in_bars`, `fade_frames`,
+`watermark` (`WatermarkParams`), `lilypond_exe`, `ffmpeg_exe`, `fluidsynth_exe`.
