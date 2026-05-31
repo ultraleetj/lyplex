@@ -49,11 +49,16 @@ lilypond --svg -dpoint-and-click score.ly
 Single-strip layout (scroll-friendly, required):
 ```lilypond
 \paper {
-  line-width = 9999\mm
-  page-count = 1
+  paper-width = 5000\mm
+  line-width = 4990\mm
+  paper-height = 250\mm
+  top-margin = 5\mm
+  bottom-margin = 5\mm
   indent = 0
 }
 ```
+`line-width` must be ≤ `paper-width`; setting only `line-width` triggers LilyPond's
+"systems go off page" warning and it reverts to defaults. Both must be set.
 Produces one long horizontal SVG strip — camera pans left→right.
 
 ---

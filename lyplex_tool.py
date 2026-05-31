@@ -107,8 +107,11 @@ def _add_strip_paper(source: str) -> str:
     """Append single-strip paper block."""
     paper = r"""
 \paper {
-  line-width = 9999\mm
-  page-count = 1
+  paper-width = 5000\mm
+  line-width = 4990\mm
+  paper-height = 250\mm
+  top-margin = 5\mm
+  bottom-margin = 5\mm
   indent = 0
 }
 """
