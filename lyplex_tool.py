@@ -272,6 +272,12 @@ def patch_ly_audio_midi(source: str) -> str:
 # Header extraction
 # ---------------------------------------------------------------------------
 
+def _extract_source_bpm(source: str) -> float | None:
+    """Return first numeric BPM from \\tempo markings (e.g. \\tempo 4=120), or None."""
+    m = re.search(r'\\tempo\b[^=\n]*=\s*(\d+)', source)
+    return float(m.group(1)) if m else None
+
+
 def _extract_header(source: str) -> dict[str, str]:
     """Parse \\header block for title, subtitle, composer, copyright, tagline."""
     m = re.search(r'\\header\s*\{([^}]*)\}', source, re.DOTALL)
@@ -1250,7 +1256,7 @@ def generate_mp4(
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,
     fps: int = DEFAULT_FPS,
-    tempo_multiplier: float = 1.0,
+    tempo_bpm: float | None = None,
     lilypond_exe: str | None = None,
     ffmpeg_exe: str | None = None,
     fluidsynth_exe: str | None = None,
@@ -1282,6 +1288,18 @@ def generate_mp4(
     _require_version_declaration(source, ly_path)
 
     header = _extract_header(source)
+
+    source_bpm = _extract_source_bpm(source)
+    if tempo_bpm is not None:
+        if source_bpm is not None:
+            tempo_multiplier = tempo_bpm / source_bpm
+            print(f"[lyplex] tempo: {source_bpm:.0f} BPM → {tempo_bpm:.0f} BPM (×{tempo_multiplier:.4f})")
+        else:
+            print(f"[lyplex] WARNING: no \\tempo found in source; target BPM {tempo_bpm:.0f} ignored")
+            tempo_multiplier = 1.0
+    else:
+        tempo_multiplier = 1.0
+
     needs_audio_midi = True  # timing MIDI strips ties; audio always uses separate patch
 
     workdir = tempfile.mkdtemp(prefix="lyplex_")
@@ -1471,8 +1489,9 @@ if __name__ == "__main__":
     parser.add_argument("--metronome", action="store_true", help="Add metronome click track")
     parser.add_argument("--count-in", type=int, default=0, metavar="BARS",
                         help="Count-in bars before music (requires --metronome)")
-    parser.add_argument("--tempo", type=float, default=1.0, metavar="MULT",
-                        help="Tempo multiplier (e.g. 0.75 = 75%%)")
+    parser.add_argument("--tempo", type=float, default=None, metavar="BPM",
+                        help="Target BPM (e.g. 100). Requires \\tempo in .ly. "
+                             "Original BPM is shown in pipeline log.")
     parser.add_argument("--fill-height", action="store_true",
                         help="Pad strip to requested height (centres content, white background)")
     parser.add_argument("--no-title", dest="overlay_title", action="store_false", default=True,
@@ -1499,6 +1518,6 @@ if __name__ == "__main__":
         bar_numbers=not args.no_bar_numbers,
         metronome=args.metronome,
         count_in_bars=args.count_in,
-        tempo_multiplier=args.tempo,
+        tempo_bpm=args.tempo,
         fill_height=args.fill_height,
     )

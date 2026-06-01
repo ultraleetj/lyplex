@@ -14,7 +14,7 @@ from pathlib import Path
 
 import wx
 
-from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ClickParams, WatermarkParams, generate_mp4
+from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ClickParams, WatermarkParams, generate_mp4, _extract_source_bpm
 
 HERE = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
 
@@ -56,7 +56,7 @@ class PipelineConfig:
     width: int
     height: int
     fps: int
-    tempo: float
+    tempo_bpm: float | None
     cursor_line: bool
     cursor_color: tuple[int, int, int]
     cursor_width: int
@@ -409,6 +409,7 @@ class MainFrame(wx.Frame):
             "LilyPond score (.ly):",
             "LilyPond files (*.ly)|*.ly|All files (*.*)|*.*",
             hint="(sheet music source)")
+        self._ly_tc.Bind(wx.EVT_TEXT, self._on_ly_changed)
 
         self._sf2_tc = file_row(
             "Soundfont (.sf2):",
@@ -458,8 +459,8 @@ class MainFrame(wx.Frame):
         grid.AddSpacer(0)
 
         self._tempo_tc = spin_double_row(
-            "Tempo multiplier:", 0.25, 4.0, 1.0, 0.05, 2,
-            hint="(1.0 = original speed)")
+            "Target BPM:", 20.0, 400.0, 0.0, 1.0, 0,
+            hint="(0 = use score tempo)")
 
         # --- overlay / option checkboxes ---
 
@@ -588,6 +589,17 @@ class MainFrame(wx.Frame):
     # Encode MP4
     # ------------------------------------------------------------------
 
+    def _on_ly_changed(self, _event) -> None:
+        ly_path = self._ly_tc.GetValue().strip()
+        if Path(ly_path).is_file():
+            try:
+                source = Path(ly_path).read_text(encoding="utf-8")
+                bpm = _extract_source_bpm(source)
+                if bpm is not None:
+                    self._tempo_tc.SetValue(bpm)
+            except Exception:
+                pass
+
     def _on_encode_mp4(self, _event) -> None:
         ly = self._ly_tc.GetValue().strip()
         sf2 = self._sf2_tc.GetValue().strip()
@@ -614,9 +626,10 @@ class MainFrame(wx.Frame):
             return
 
         try:
-            tempo = float(self._tempo_tc.GetValue())
+            _bpm_val = float(self._tempo_tc.GetValue())
+            tempo_bpm = _bpm_val if _bpm_val > 0 else None
         except ValueError:
-            tempo = 1.0
+            tempo_bpm = None
 
         out_mp4 = str(Path(out_dir) / f"{Path(ly).stem}.mp4")
         self._mp4_path = out_mp4
@@ -645,7 +658,7 @@ class MainFrame(wx.Frame):
 
         config = PipelineConfig(
             ly=ly, sf2=sf2, out_mp4=out_mp4,
-            width=width, height=height, fps=fps, tempo=tempo,
+            width=width, height=height, fps=fps, tempo_bpm=tempo_bpm,
             cursor_line=cursor_line, cursor_color=cursor_color, cursor_width=cursor_width,
             note_highlight=note_highlight, highlight_color=highlight_color,
             trail=trail, overlay_title=overlay_title, overlay_footer=overlay_footer,
@@ -695,7 +708,7 @@ class MainFrame(wx.Frame):
                 width=config.width,
                 height=config.height,
                 fps=config.fps,
-                tempo_multiplier=config.tempo,
+                tempo_bpm=config.tempo_bpm,
                 lilypond_exe=config.lilypond_exe,
                 ffmpeg_exe=config.ffmpeg_exe,
                 fluidsynth_exe=config.fluidsynth_exe,
