@@ -472,6 +472,33 @@ def svg_px_scale(svg_path: Path, output_height: int) -> tuple[float, float]:
     """Returns (render_dpi, px_per_svgu)."""
     return _svg_scale_from_root(etree.parse(str(svg_path)).getroot(), output_height)
 
+def _crop_svg_to_content(
+    svg_path: Path, svg_root, max_x_svgu: float, padding: float = 0.05
+) -> tuple[Path, object]:
+    """Rewrite SVG width/viewBox to content extent + padding fraction.
+
+    Returns (new_path, new_root). render_dpi is unchanged (depends only on height).
+    px_per_svgu must be recomputed from the returned root.
+    """
+    vb = svg_root.get("viewBox", "0 0 1 1").split()
+    vb_x, vb_y = float(vb[0]), float(vb[1])
+    old_vb_w, vb_h = float(vb[2]), float(vb[3])
+    old_width_mm = _parse_mm(svg_root.get("width", "0mm"))
+
+    new_vb_w = max((max_x_svgu - vb_x) * (1.0 + padding), 1.0)
+    new_width_mm = old_width_mm * new_vb_w / old_vb_w
+
+    svg_root.set("width", f"{new_width_mm:.2f}mm")
+    svg_root.set("viewBox", f"{vb_x:.4f} {vb_y:.4f} {new_vb_w:.4f} {vb_h:.4f}")
+
+    cropped = svg_path.with_name("strip-cropped.svg")
+    etree.ElementTree(svg_root).write(
+        str(cropped), xml_declaration=True, encoding="utf-8"
+    )
+    print(f"[lyplex] SVG cropped: {old_width_mm:.0f}mm -> {new_width_mm:.0f}mm "
+          f"({new_width_mm/old_width_mm*100:.0f}% of strip)")
+    return cropped, svg_root
+
 # ---------------------------------------------------------------------------
 # MIDI parsing
 # ---------------------------------------------------------------------------
@@ -963,6 +990,7 @@ def encode_mp4(
     # Duration = count-in + last note ms + 2s tail
     duration_ms = count_in_ms + timing_map[-1].ms + 2000.0
     n_frames = int(duration_ms / 1000.0 * fps) + 1
+    fade_frames = min(fade_frames, n_frames // 2)
 
     audio_filters = _atempo_filter(atempo) if abs(atempo - 1.0) > 1e-6 else None
 
@@ -1044,9 +1072,10 @@ def encode_mp4(
                         for idx, entry in enumerate(past):
                             ex_px = int(entry.x * px_per_svgu) - left
                             ey_px = int(entry.y * px_per_svgu)
-                            if -TRAIL_DOT_RADIUS <= ex_px <= width + TRAIL_DOT_RADIUS:
+                            r = TRAIL_DOT_RADIUS
+                            if (-r <= ex_px <= width + r
+                                    and -r <= ey_px <= height + r):
                                 alpha = int(200 * (idx + 1) / n_past) if n_past else 0
-                                r = TRAIL_DOT_RADIUS
                                 ov.ellipse(
                                     [(ex_px - r, ey_px - r), (ex_px + r, ey_px + r)],
                                     fill=(220, 80, 50, alpha),
@@ -1060,7 +1089,9 @@ def encode_mp4(
                             if entry.duration_ms > 0 and entry.ms + entry.duration_ms > t_ms:
                                 ex_px = int(entry.x * px_per_svgu) - left
                                 ey_px = int(entry.y * px_per_svgu)
-                                if -HL_RADIUS * 2 <= ex_px <= width + HL_RADIUS * 2:
+                                r2 = HL_RADIUS * 2
+                                if (-r2 <= ex_px <= width + r2
+                                        and -r2 <= ey_px <= height + r2):
                                     ov.ellipse(
                                         [(ex_px - HL_RADIUS, ey_px - HL_RADIUS),
                                          (ex_px + HL_RADIUS, ey_px + HL_RADIUS)],
@@ -1183,6 +1214,10 @@ def generate_mp4(
 
         if abs(tempo_multiplier - 1.0) > 1e-6:
             timing_map = [dc_replace(e, ms=e.ms / tempo_multiplier) for e in timing_map]
+
+        # Crop SVG to content width before rendering
+        max_content_x = max(a.x for a in anchors)
+        svg_path, svg_root = _crop_svg_to_content(svg_path, svg_root, max_content_x)
 
         # Scale
         render_dpi, px_per_svgu = _svg_scale_from_root(svg_root, height)
