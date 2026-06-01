@@ -96,7 +96,13 @@ Pedagogical bonus: video shows notes without ties (students read clean noteheads
 LilyPond without `\unfoldRepeats` plays MIDI straight through once, as if no repeats exist.
 This naturally stays in sync with SVG notation (which also shows each section once).
 Dual MIDI only matters when audio needs to play repeats (i.e., when original has `\unfoldRepeats`).
-`lyplex_tool.py` detects `\unfoldRepeats` in the midi block via regex to decide if audio MIDI differs.
+`lyplex_tool.py` detects `\unfoldRepeats` anywhere in the source via regex to decide if audio MIDI differs.
+
+`\unfoldRepeats` wraps **score or music blocks** (not `\midi {}` blocks) and takes an optional
+type specifier: `\unfoldRepeats \score { }`, `\unfoldRepeats { }`, `\unfoldRepeats volta \music`,
+`\unfoldRepeats volta,tremolo \music` (types: `volta`, `tremolo`, `percent`; empty = unfold all).
+Source: `ly/music-functions-init.ly:2635-2646`. Detection regex must match `\unfoldRepeats` at
+any nesting level in the source, not scoped to midi blocks.
 
 ---
 
@@ -115,11 +121,16 @@ Anchor format (from `scm/output-svg.scm`):
 URI has 4 fields: FILE, LINE, CHR (char offset), COL (end column). Windows backslashes already
 converted to `/` by LilyPond before embedding — no special handling needed.
 
-In LilyPond 2.24, `<a>` is a **direct child of `<svg>` root** and contains a
-`<g transform="translate(x, y)">` child — the translate is INSIDE the anchor, not outside it.
-(Older versions nested `<a>` inside `<g>` ancestors; that structure no longer applies.)
-**x position**: read `translate(x, y)` from the first child `<g>` of the `<a>` element → absolute x in
-LilyPond SVG units (1 unit = 1.7573 mm, set by `lily-unit-length`).
+In LilyPond 2.24, `<a>` contains a `<g transform="translate(x, y)">` child — the translate is
+INSIDE the anchor. `<a>` may be nested inside ancestor `<g>` elements (from `start-group-node`
+in `scm/output-svg.scm:76-83`), so it is not always a direct SVG root child.
+
+**x position is absolute despite nesting:** the offset accumulates through the stencil expression
+tree before `settranslation` is called (`lily/stencil-interpret.cc:40-43` accumulates `translate-stencil`
+offsets into `o` before passing to `grob-cause`). The translate value inside `<a>` is absolute
+relative to the SVG root — no need to sum ancestor `<g>` transforms.
+Read `translate(x, y)` from the first child `<g>` of the `<a>` element → absolute x in
+LilyPond SVG units (default 1 unit = 1.7573 mm at 20pt staff size; scales with `set-global-staff-size`).
 Confirmed in `scm/output-svg.scm`: `settranslation` emits `<g transform="translate(x,y)">` and
 the point-and-click anchor opens before it, wrapping it as a child.
 
@@ -132,9 +143,12 @@ Extract: `[(line, chr, x_absolute), ...]` for all `<a xlink:href="textedit://...
 **Multi-track:** LilyPond outputs one MIDI track per staff/instrument. Collect note_on events
 from ALL tracks, merge by tick before beat grouping.
 
-**Tempo changes:** MIDI `SET_TEMPO` meta events appear on track 0. Accumulate them for correct
-tick→ms conversion — do not assume constant tempo. `mido` provides `MidiFile.ticks_per_beat`;
-iterate all messages in order, tracking current tempo and elapsed ticks.
+**Tempo changes:** MIDI `SET_TEMPO` meta events are guaranteed on track 0. LilyPond's
+`Control_track_performer` (`lily/control-track-performer.cc:50-87`) intercepts all `Audio_tempo`
+events and writes them exclusively to the control track, which is always track 0. Also writes
+time signature and marker text. Accumulate tempo changes for correct tick→ms conversion —
+do not assume constant tempo. `mido` provides `MidiFile.ticks_per_beat`; iterate all messages
+in order, tracking current tempo and elapsed ticks.
 
 ```python
 def ticks_to_ms(midi_file):
@@ -338,6 +352,12 @@ Key files in `upstream/lilypond/` for implementation reference:
 | `scm/define-event-classes.scm` | Event hierarchy: `note-event` ≠ `rest-event`, `multi-measure-rest-event` |
 | `scm/midi.scm` | MIDI instrument names, channel assignments |
 | `lily/midi-walker.cc` | Grace note delta-tick clamping (`output_event` clamps negative delta to 0 → tick-0 collision) |
+| `lily/control-track-performer.cc` | Tempo/time-sig/marker always written to track 0 (control track) |
+| `lily/stencil-interpret.cc` | Offset accumulation for translate-stencil → SVG translate is absolute even when `<a>` is nested |
+| `ly/declarations-init.ly` | `~` defined only as TieEvent (line 85) — safe to strip globally |
+| `ly/music-functions-init.ly` | `\unfoldRepeats` signature: optional type list + music; wraps score/music not midi blocks |
+| `ly/property-init.ly` | `\pointAndClickTypes` accepts `symbol-list-or-symbol?` |
+| `scm/c++.scm` | `symbol-list-or-symbol?` predicate: list of symbols or single symbol |
 | `input/regression/point-and-click-types.ly` | `\pointAndClickTypes #'note-event` usage example |
 
 ---
@@ -413,7 +433,7 @@ def render_click_wav(beat_ms_list, accented_indices, out_path):
 - `PipelineConfig` not in tool (lives in GUI)
 - Bar-level timing map (`use_bar_timing=True` default) — smoother scroll on fast passages
 - Grace note reconciliation — svg>midi mismatch merged via closest x-gap pairs
-- `cluster-note-event` included in `\pointAndClickTypes` injection (best-effort)
+- `cluster-note-event` included in `\pointAndClickTypes` injection — confirmed working (ClusterSpannerBeacon grob receives cause event)
 - Strip PNG memory warning at >400 MB estimate
 - Overlay: cursor line, note highlight, trail dots + tint, title/footer bands, watermark
 - Metronome click synthesis with count-in, accent/beat waveform/freq/amp params
@@ -480,8 +500,8 @@ because the note anchor at bar start maps exactly to bar start tick.
 - [x] Grace notes: tick-0 collision handled by merging closest SVG pairs when svg_count > midi_count
 - [x] Strip PNG memory: warns if estimated RAM > 400 MB; tiling deferred for very long scores
 - [x] Scroll clamp: before first note → offset=0; after last note → hold last position (implemented in scroll_offset_at)
-- [x] `~` stripping: `re.sub(r'~', '', source)` — safe, `~` is exclusively ties in practice
-- [~] `cluster-note-event`: injection changed to `#'(note-event cluster-note-event)` — anchors emitted IF LilyPond attaches a cause event to ClusterSpanNote grobs (unverified); if not, silently omitted, bar interpolation covers the gap
+- [x] `~` stripping: `re.sub(r'~', '', source)` — safe, `~` is exclusively `TieEvent` (`ly/declarations-init.ly:85`); no other grammar use
+- [x] `cluster-note-event`: `\pointAndClickTypes #'(note-event cluster-note-event)` is valid — `pointAndClickTypes` accepts `symbol-list-or-symbol?` (scm/c++.scm:189, ly/property-init.ly:683). Cluster grob is `ClusterSpannerBeacon` (not ClusterSpanNote); it receives cause event `cluster_notes_[0]->self_scm()` (lily/cluster-engraver.cc:110) → point-and-click anchors ARE emitted for cluster notes
 - [x] Multi-staff (piano): noteheads at same beat share same x across staves — no special handling needed
 - [ ] Multi-page LilyPond output (paginated scroll) — harder than single strip; deferred
 - [x] Font embedding in cairosvg: falls back gracefully through Arial → DejaVu → Pillow default; logs warning when default used
