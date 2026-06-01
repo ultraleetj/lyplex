@@ -24,6 +24,12 @@ from lxml import etree
 from PIL import Image, ImageDraw, ImageFont
 import cairosvg
 
+# Suppress console popup windows on Windows when spawning subprocesses from a GUI.
+_WIN_NO_WINDOW: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW}
+    if sys.platform == "win32" else {}
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -113,6 +119,53 @@ def _strip_ties(source: str) -> str:
 def _strip_unfold_repeats(source: str) -> str:
     return re.sub(r"\\unfoldRepeats\b", "", source)
 
+def _has_volta_repeats(source: str) -> bool:
+    return bool(re.search(r"\\repeat\s+volta\b", source))
+
+def _wrap_score_body_with_unfold(body: str) -> str:
+    """Insert \\unfoldRepeats around music portion of a \\score block body."""
+    depth = 0
+    i = 0
+    n = len(body)
+    while i < n:
+        c = body[i]
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+        elif depth == 0 and c == '\\' and i + 1 < n:
+            for kw in ('layout', 'midi', 'header', 'paper'):
+                end = i + 1 + len(kw)
+                if body[i + 1:end] == kw and (end >= n or not body[end].isalnum() and body[end] != '_'):
+                    music = body[:i].strip()
+                    rest = body[i:].strip()
+                    return f'\n  \\unfoldRepeats {{\n  {music}\n  }}\n  {rest}\n'
+        i += 1
+    return f'\n  \\unfoldRepeats {{\n{body}\n  }}\n'
+
+def _inject_unfold_repeats(source: str) -> str:
+    """Wrap music content in each \\score block with \\unfoldRepeats { ... }."""
+    result = []
+    pos = 0
+    n = len(source)
+    for m in re.finditer(r'\\score\s*\{', source):
+        result.append(source[pos:m.end()])
+        content_start = m.end()
+        depth = 1
+        j = content_start
+        while j < n and depth > 0:
+            if source[j] == '{':
+                depth += 1
+            elif source[j] == '}':
+                depth -= 1
+            j += 1
+        body = source[content_start:j - 1]
+        result.append(_wrap_score_body_with_unfold(body))
+        result.append('}')
+        pos = j
+    result.append(source[pos:])
+    return ''.join(result)
+
 def _strip_book_output_name(source: str) -> str:
     # Remove \bookOutputName "..." so LilyPond uses our patched filename, not the original.
     return re.sub(r'\\bookOutputName\s+"[^"]*"', "", source)
@@ -194,6 +247,9 @@ def _add_strip_paper(source: str) -> str:
 def patch_ly_svg(source: str, bar_numbers: bool = True) -> str:
     s = _strip_book_output_name(source)
     s = _strip_ties(s)
+    if _has_volta_repeats(source):
+        s = _strip_unfold_repeats(s)
+        s = _inject_unfold_repeats(s)
     s = _inject_point_and_click_types(s)
     if bar_numbers:
         s = _inject_all_bar_numbers(s)
@@ -204,11 +260,16 @@ def patch_ly_timing_midi(source: str) -> str:
     s = _strip_book_output_name(source)
     s = _strip_ties(s)
     s = _strip_unfold_repeats(s)
+    if _has_volta_repeats(source):
+        s = _inject_unfold_repeats(s)
     s = _add_strip_paper(s)
     return s
 
 def patch_ly_audio_midi(source: str) -> str:
     s = _strip_book_output_name(source)
+    if _has_volta_repeats(source) or _has_unfold_repeats(source):
+        s = _strip_unfold_repeats(s)
+        s = _inject_unfold_repeats(s)
     return _add_strip_paper(s)
 
 def _has_unfold_repeats(source: str) -> bool:
@@ -382,6 +443,7 @@ def _compile_lilypond(patched_source: str, basename: str, workdir: str, lilypond
         cwd=workdir,
         capture_output=True,
         text=True,
+        **_WIN_NO_WINDOW,
     )
     if result.stdout.strip():
         print(result.stdout.rstrip())
@@ -636,8 +698,11 @@ def extract_timing_midi(midi_path: Path) -> tuple[list[tuple[int, int]], list[tu
     if not tracks:
         raise RuntimeError("No note events found in timing MIDI.")
 
-    # Staff with longest total duration drives timing map
-    driving_track = max(tracks, key=lambda t: t.total_duration_ticks)
+    # Staff with most unique onset ticks drives timing map.
+    # Most-unique-ticks favours the melody over chord/accompaniment tracks whose
+    # multi-voice chords inflate total_duration_ticks while having fewer distinct
+    # onset positions (whole/half note chords share a tick across all chord tones).
+    driving_track = max(tracks, key=lambda t: len({e[0] for e in t.note_ons}))
     note_ons = sorted(driving_track.note_ons, key=lambda e: e[0])
 
     return note_ons, tempo_map, midi_file.ticks_per_beat, time_sig
@@ -843,7 +908,7 @@ def render_audio_wav(midi_path: Path, sf2_path: str, wav_path: Path, fluidsynth_
         sf2_path,
         str(midi_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, **_WIN_NO_WINDOW)
     if result.returncode != 0:
         raise RuntimeError(f"fluidsynth failed:\n{result.stderr}")
 
@@ -877,6 +942,9 @@ def _make_click_burst(p: ClickParams) -> list[float]:
     return burst
 
 
+_CLICK_PRE_ROLL_MS = 500.0  # silence before first count-in click; prevents t=0 clip
+
+
 def render_click_wav(
     tempo_map: list[tuple[int, float, int]],
     ticks_per_beat: int,
@@ -888,7 +956,12 @@ def render_click_wav(
     beat_params: ClickParams | None = None,
     count_in_bars: int = 0,
 ) -> ClickResult:
-    """Synthesize a click-track WAV.  Returns ClickResult with wav_path and count-in duration."""
+    """Synthesize a click-track WAV.  Returns ClickResult with wav_path and count-in duration.
+
+    The WAV starts with _CLICK_PRE_ROLL_MS of silence so the very first click is
+    never clipped by a player.  count_in_ms in the returned ClickResult includes
+    this pre-roll so the music audio is delayed by the same amount.
+    """
     ap = accent_params or _DEFAULT_ACCENT
     bp = beat_params   or _DEFAULT_BEAT
 
@@ -898,24 +971,32 @@ def render_click_wav(
     def t2ms(tick: int) -> float:
         return _tick_to_ms(tick, tempo_map, ticks_per_beat)
 
-    count_in_ms = 0.0
+    # count_in_ms is the musical silence before beat 1 (count-in bars).
+    # pre_roll shifts the whole WAV so t=0 is never sample 0.
+    count_in_music_ms = 0.0
     clicks: list[tuple[float, bool]] = []
 
     if count_in_bars > 0:
         bar_ms = t2ms(ticks_per_bar) / tempo_multiplier
-        count_in_ms = count_in_bars * bar_ms
+        count_in_music_ms = count_in_bars * bar_ms
         count_in_ticks = count_in_bars * ticks_per_bar
         for t in range(count_in_ticks, 0, -ticks_per_beat):
-            t_ms = count_in_ms - t2ms(t) / tempo_multiplier
+            t_ms = count_in_music_ms - t2ms(t) / tempo_multiplier
             clicks.append((t_ms, t % ticks_per_bar == 0))
 
     last_tick = max(tempo_map[-1][0], int(total_ms / 1000.0 * 2 * ticks_per_beat))
 
     for t in range(0, last_tick + ticks_per_beat, ticks_per_beat):
-        t_ms = t2ms(t) / tempo_multiplier + count_in_ms
-        if t_ms > total_ms + count_in_ms + 500:
+        t_ms = t2ms(t) / tempo_multiplier + count_in_music_ms
+        if t_ms > total_ms + count_in_music_ms + 500:
             break
         clicks.append((t_ms, t % ticks_per_bar == 0))
+
+    # Shift every click time forward by the pre-roll.
+    clicks = [(t_ms + _CLICK_PRE_ROLL_MS, accent) for t_ms, accent in clicks]
+
+    # Total count-in delay seen by the muxer = musical count-in + pre-roll.
+    count_in_ms = count_in_music_ms + _CLICK_PRE_ROLL_MS
 
     wav_total_ms = total_ms + count_in_ms
     n_samples = int((wav_total_ms / 1000.0 + 1.0) * _CLICK_SAMPLE_RATE)
@@ -1041,7 +1122,7 @@ def encode_mp4(
     ffmpeg_cmd += ["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
                    "-shortest", str(out_path)]
 
-    proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+    proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, **_WIN_NO_WINDOW)
 
     ms_keys = [e.ms for e in timing_map]
     cx = int(width * CURSOR_POSITION)
@@ -1202,7 +1283,7 @@ def generate_mp4(
     _require_version_declaration(source, ly_path)
 
     header = _extract_header(source)
-    needs_audio_midi = _has_unfold_repeats(source)
+    needs_audio_midi = _has_unfold_repeats(source) or _has_volta_repeats(source)
 
     workdir = tempfile.mkdtemp(prefix="lyplex_")
     try:
@@ -1218,7 +1299,7 @@ def generate_mp4(
         timing_midi_path = compile_timing_midi(source, workdir, lilypond_exe)
 
         if needs_audio_midi:
-            print("[lyplex] compiling audio MIDI (has \\unfoldRepeats)...")
+            print("[lyplex] compiling audio MIDI (unfolding repeats)...")
             audio_midi_path = compile_audio_midi(source, workdir, lilypond_exe)
         else:
             audio_midi_path = timing_midi_path
@@ -1305,9 +1386,14 @@ def generate_mp4(
         if metronome:
             click_wav = Path(workdir) / "click.wav"
             print("[lyplex] synthesizing metronome click track...")
+            # Use the rendered audio WAV duration as total_ms so the click track
+            # covers the full piece even when unfolded repeats make the audio MIDI
+            # longer than the timing MIDI (which drives note_timing_map).
+            with wave.open(str(wav_path), 'r') as _wf:
+                _audio_total_ms = _wf.getnframes() / _wf.getframerate() * 1000.0
             click_result = render_click_wav(
                 tempo_map, ticks_per_beat, time_sig,
-                total_ms=note_timing_map[-1].ms + 2000.0,
+                total_ms=_audio_total_ms,
                 out_path=click_wav,
                 tempo_multiplier=tempo_multiplier,
                 accent_params=click_accent,
@@ -1367,6 +1453,15 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--no-bar-timing", action="store_true",
                         help="Use note-level timing instead of bar-level")
+    parser.add_argument("--cursor", action="store_true", help="Show cursor line")
+    parser.add_argument("--trail", action="store_true", help="Show past-beat trail dots")
+    parser.add_argument("--highlight", action="store_true", help="Highlight active note region")
+    parser.add_argument("--no-bar-numbers", action="store_true", help="Hide bar numbers in score")
+    parser.add_argument("--metronome", action="store_true", help="Add metronome click track")
+    parser.add_argument("--count-in", type=int, default=0, metavar="BARS",
+                        help="Count-in bars before music (requires --metronome)")
+    parser.add_argument("--tempo", type=float, default=1.0, metavar="MULT",
+                        help="Tempo multiplier (e.g. 0.75 = 75%%)")
     args = parser.parse_args()
 
     generate_mp4(
@@ -1377,4 +1472,11 @@ if __name__ == "__main__":
         height=args.height,
         fps=args.fps,
         use_bar_timing=not args.no_bar_timing,
+        cursor_line=args.cursor,
+        trail=args.trail,
+        note_highlight=args.highlight,
+        bar_numbers=not args.no_bar_numbers,
+        metronome=args.metronome,
+        count_in_bars=args.count_in,
+        tempo_multiplier=args.tempo,
     )
