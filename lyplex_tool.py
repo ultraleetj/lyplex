@@ -928,17 +928,22 @@ def _build_audio_cmd(
     args: list[str] = []
     if click_wav_path is not None:
         args += ["-i", str(click_wav_path)]
-        segments = [f"[1:a]adelay={delay_ms}|{delay_ms}[music]"]
-        music_out = "[music]"
+        # atempo before adelay: adelay operates in output-domain ms after speed change,
+        # so the delay stays equal to count_in_ms regardless of tempo_multiplier.
         if audio_filters:
-            segments.append(f"[music]{audio_filters}[musicf]")
-            music_out = "[musicf]"
-        segments.append(f"{music_out}[2:a]amix=inputs=2:duration=longest:normalize=0")
+            segments = [
+                f"[1:a]{audio_filters}[musicf]",
+                f"[musicf]adelay={delay_ms}|{delay_ms}[music]",
+            ]
+        else:
+            segments = [f"[1:a]adelay={delay_ms}|{delay_ms}[music]"]
+        segments.append(f"[music][2:a]amix=inputs=2:duration=longest:normalize=0")
         args += ["-filter_complex", ";".join(segments)]
     elif delay_ms > 0:
-        chain = f"[1:a]adelay={delay_ms}|{delay_ms}"
         if audio_filters:
-            chain += f",{audio_filters}"
+            chain = f"[1:a]{audio_filters},adelay={delay_ms}|{delay_ms}"
+        else:
+            chain = f"[1:a]adelay={delay_ms}|{delay_ms}"
         args += ["-filter_complex", chain]
     elif audio_filters:
         args += ["-filter:a", audio_filters]
