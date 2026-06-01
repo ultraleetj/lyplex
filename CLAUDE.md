@@ -384,13 +384,31 @@ def render_click_wav(beat_ms_list, accented_indices, out_path):
 
 | File | Status |
 |------|--------|
-| `lyplex_tool.py` | Done — full pipeline, cursor line + trail overlay, bar-level timing, CLI entry point |
-| `lyplex_gui.py` | Done — wxPython GUI, cursor/trail checkboxes, background thread, CR log |
+| `lyplex_tool.py` | Done — full pipeline, all features below |
+| `lyplex_gui.py` | Done — wxPython GUI, all settings wired, background thread, CR log |
 | `lyplex_web.py` | Not started (low priority) |
 
-**Overlay features (opt-in, both default off):**
-- `cursor_line=True` — 2px red vertical line at 45% viewport width each frame
-- `trail=True` — semi-transparent blue tint over played region + fading red dots at past TRAIL_DOTS notehead positions; dots use bisect for O(log n) per-frame lookup; tint overlay pre-built outside loop
+**lyplex_tool.py features:**
+- Full compile pipeline: SVG + timing MIDI + audio MIDI (3 patched variants)
+- `ClickResult` dataclass — `render_click_wav` returns it; `encode_mp4` takes `click_result`
+- `WatermarkParams` dataclass — logo overlay at any corner with opacity
+- `PipelineConfig` not in tool (lives in GUI)
+- Bar-level timing map (`use_bar_timing=True` default) — smoother scroll on fast passages
+- Grace note reconciliation — svg>midi mismatch merged via closest x-gap pairs
+- `cluster-note-event` included in `\pointAndClickTypes` injection (best-effort)
+- Strip PNG memory warning at >400 MB estimate
+- Overlay: cursor line, note highlight, trail dots + tint, title/footer bands, watermark
+- Metronome click synthesis with count-in, accent/beat waveform/freq/amp params
+- Fade in/out frames
+- CLI entry point with `--no-bar-timing` flag
+
+**lyplex_gui.py features:**
+- `PipelineConfig` dataclass — `_run_pipeline(self, config, stream)` replaces 28-arg signature
+- `_spin_double` module-level helper used by both `MetronomeDialog` and `WatermarkDialog`
+- `MetronomeDialog` — per-click waveform, freq, duration, amplitude + count-in bars
+- `WatermarkDialog` — logo path, corner position, opacity
+- All overlay options exposed as checkboxes/color pickers
+- Accessible controls (`name=` on all, StaticText before each, status bar)
 
 ---
 
