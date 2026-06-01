@@ -122,6 +122,9 @@ def _strip_unfold_repeats(source: str) -> str:
 def _has_volta_repeats(source: str) -> bool:
     return bool(re.search(r"\\repeat\s+volta\b", source))
 
+def _has_chord_names(source: str) -> bool:
+    return bool(re.search(r"\\new\s+ChordNames\b", source))
+
 def _wrap_score_body_with_unfold(body: str) -> str:
     """Insert \\unfoldRepeats around music portion of a \\score block body."""
     depth = 0
@@ -247,7 +250,7 @@ def _add_strip_paper(source: str) -> str:
 def patch_ly_svg(source: str, bar_numbers: bool = True) -> str:
     s = _strip_book_output_name(source)
     s = _strip_ties(s)
-    if _has_volta_repeats(source):
+    if _has_volta_repeats(source) and not _has_chord_names(source):
         s = _strip_unfold_repeats(s)
         s = _inject_unfold_repeats(s)
     s = _inject_point_and_click_types(s)
@@ -260,14 +263,14 @@ def patch_ly_timing_midi(source: str) -> str:
     s = _strip_book_output_name(source)
     s = _strip_ties(s)
     s = _strip_unfold_repeats(s)
-    if _has_volta_repeats(source):
+    if _has_volta_repeats(source) and not _has_chord_names(source):
         s = _inject_unfold_repeats(s)
     s = _add_strip_paper(s)
     return s
 
 def patch_ly_audio_midi(source: str) -> str:
     s = _strip_book_output_name(source)
-    if _has_volta_repeats(source) or _has_unfold_repeats(source):
+    if (_has_volta_repeats(source) or _has_unfold_repeats(source)) and not _has_chord_names(source):
         s = _strip_unfold_repeats(s)
         s = _inject_unfold_repeats(s)
     return _add_strip_paper(s)
@@ -1283,7 +1286,8 @@ def generate_mp4(
     _require_version_declaration(source, ly_path)
 
     header = _extract_header(source)
-    needs_audio_midi = _has_unfold_repeats(source) or _has_volta_repeats(source)
+    _can_unfold = not _has_chord_names(source)
+    needs_audio_midi = (_has_unfold_repeats(source) or _has_volta_repeats(source)) and _can_unfold
 
     workdir = tempfile.mkdtemp(prefix="lyplex_")
     try:
