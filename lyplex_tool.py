@@ -802,7 +802,8 @@ def scroll_offset_at(
 # ---------------------------------------------------------------------------
 
 def render_strip_png(svg_path: Path, render_dpi: float, out_path: Path) -> None:
-    cairosvg.svg2png(url=str(svg_path), write_to=str(out_path), dpi=render_dpi)
+    cairosvg.svg2png(url=str(svg_path), write_to=str(out_path), dpi=render_dpi,
+                     background_color="white")
 
 # ---------------------------------------------------------------------------
 # Audio render
