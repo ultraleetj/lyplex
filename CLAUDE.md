@@ -15,7 +15,7 @@ Input: `.ly` file. Output: scrolling MP4 (primary). HTML preview is secondary / 
 **Dependencies:** `mido`, `cairosvg`, `Pillow`, `lxml`, `wxPython` (GUI only)
 External binaries: `lilypond`, `ffmpeg`, `fluidsynth` (audio) — must be on PATH
 
-`python-ly` dropped: it is a syntax parser only, cannot compute beat offsets. Not used.
+`python-ly` dropped: syntax parser only, cannot compute beat offsets.
 
 ---
 
@@ -45,10 +45,8 @@ lilypond --svg -dpoint-and-click -dno-use-paper-size-for-page score.ly
 - `--svg` — SVG output
 - `-dpoint-and-click` — embeds `textedit://FILEPATH:LINE:COL:ENDCOL` on every note element in SVG
 - `-dno-use-paper-size-for-page` — SVG width/height = actual content extent, not paper-width.
-  Without this flag, SVG = full paper-width even if music is shorter → wasted render memory.
-  Verified in `scm/framework-svg.scm`: SVG dimensions come from stencil x/y extent; `scm/page.scm`
-  forces stencil to paper-width only when `use-paper-size-for-page` is true (default `#t`,
-  see `scm/lily.scm:477`).
+  Default `use-paper-size-for-page = #t` (`scm/lily.scm:477`) makes SVG = full paper-width even
+  if music is shorter → wasted render memory. This flag disables that (`scm/page.scm:286-291`).
 - LilyPond embeds full absolute paths in textedit:// URIs — no special handling needed on Windows
 
 Single-strip layout (scroll-friendly, required):
@@ -63,17 +61,12 @@ Single-strip layout (scroll-friendly, required):
   indent = 0
 }
 ```
-`system-count = 1` forces all music onto one horizontal strip.
-`line-width` must be ≤ `paper-width`; both must be set (setting only `line-width` triggers
-LilyPond's "systems go off page" warning and reverts to defaults).
-9999mm covers ~20 minutes at 120 BPM in 4/4 — sufficient for all teaching pieces.
+`system-count = 1` forces all music onto one horizontal strip. `line-width` must be ≤ `paper-width`;
+both must be set or LilyPond warns and reverts to defaults. 9999mm ≈ 20 min at 120 BPM in 4/4.
 
-**Auto-ragging:** When `system-count = 1` and `ragged-right` is not explicitly set, LilyPond
-automatically uses natural (ragged) note spacing for the single system if it would be stretched
-(`constrained-breaking.cc:142-148`). No need to set `ragged-right = ##t` explicitly.
-Combined with `-dno-use-paper-size-for-page`, SVG width = exact music content width.
-
-Produces one long horizontal SVG strip — camera pans left→right.
+**Auto-ragging:** single-system scores auto-use natural note spacing without `ragged-right = ##t`
+(`lily/constrained-breaking.cc:142-148`). Combined with `-dno-use-paper-size-for-page`, SVG width
+= exact music content width.
 
 ---
 
@@ -83,56 +76,45 @@ Three variants compiled from patched `.ly` copies. User never manages patches ma
 
 | Variant | `~` stripped | `\unfoldRepeats` stripped | Purpose |
 |---------|-------------|--------------------------|---------|
-| SVG | yes + `\pointAndClickTypes #'note-event` | — | Visual strip, no ties, note anchors only |
+| SVG | yes + `\pointAndClickTypes #'(note-event cluster-note-event)` | — | Visual strip, no ties, note anchors only |
 | Timing MIDI | yes | yes | Scroll sync — 1:1 with SVG anchors |
 | Audio MIDI | no | no | Original score, full audio with repeats |
 
-**Ties (`~` stripping):**
-Stripping `~` from SVG source removes tie curves visually and gives one SVG anchor per notehead.
-Stripping from timing MIDI source gives one note_on per notehead → 1:1 anchor↔event grouping.
-Pedagogical bonus: video shows notes without ties (students read clean noteheads first).
+**Ties:** `~` is exclusively `TieEvent` (`ly/declarations-init.ly:85`) — `re.sub(r'~', '', source)`
+is safe. Stripping gives one SVG anchor per notehead and one MIDI note_on per notehead → 1:1 grouping.
 
-**Repeats:**
-LilyPond without `\unfoldRepeats` plays MIDI straight through once, as if no repeats exist.
-This naturally stays in sync with SVG notation (which also shows each section once).
-Dual MIDI only matters when audio needs to play repeats (i.e., when original has `\unfoldRepeats`).
-`lyplex_tool.py` detects `\unfoldRepeats` anywhere in the source via regex to decide if audio MIDI differs.
-
-`\unfoldRepeats` wraps **score or music blocks** (not `\midi {}` blocks) and takes an optional
-type specifier: `\unfoldRepeats \score { }`, `\unfoldRepeats { }`, `\unfoldRepeats volta \music`,
-`\unfoldRepeats volta,tremolo \music` (types: `volta`, `tremolo`, `percent`; empty = unfold all).
-Source: `ly/music-functions-init.ly:2635-2646`. Detection regex must match `\unfoldRepeats` at
-any nesting level in the source, not scoped to midi blocks.
+**Repeats:** without `\unfoldRepeats` LilyPond plays MIDI straight through once, staying in sync
+with SVG. Dual MIDI needed only when source has `\unfoldRepeats`. Detection: `re.search(r"\\unfoldRepeats\b", source)` scans full source. `\unfoldRepeats` wraps score/music (not `\midi {}` blocks);
+takes optional type: `volta`, `tremolo`, `percent`; empty = unfold all (`ly/music-functions-init.ly:2635`).
 
 ---
 
 ## SVG coordinate extraction
 
-**Inject `\pointAndClickTypes #'note-event`** into the patched SVG `.ly` (alongside `~` stripping).
-LilyPond then emits `<a>` anchors ONLY for `note-event` grobs — rests (`rest-event`), dynamics,
-slurs, articulations get no anchor. Eliminates all manual glyph-type filtering.
+**Inject `\pointAndClickTypes #'(note-event cluster-note-event)`** after the `\version "..."` line
+(top-level only). LilyPond emits `<a>` anchors only for note-event and cluster-note-event grobs.
+`ClusterSpannerBeacon` (not ClusterSpanNote) receives cause event → anchors confirmed working
+(`lily/cluster-engraver.cc:110`). Accepts list syntax: `symbol-list-or-symbol?` (`scm/c++.scm:189`).
 
-Anchor format (from `scm/output-svg.scm`):
+Anchor format (`scm/output-svg.scm`):
 ```xml
 <a style="color:inherit;" xlink:href="textedit://FILE:LINE:CHR:COL">
-  <path .../>   <!-- notehead glyph path -->
+  <g transform="translate(x,y)">  ← absolute x in LilyPond SVG units
+    <path .../>
+  </g>
 </a>
 ```
-URI has 4 fields: FILE, LINE, CHR (char offset), COL (end column). Windows backslashes already
-converted to `/` by LilyPond before embedding — no special handling needed.
+URI: 4 fields FILE:LINE:CHR:COL. Windows backslashes converted to `/` by LilyPond.
 
-In LilyPond 2.24, `<a>` contains a `<g transform="translate(x, y)">` child — the translate is
-INSIDE the anchor. `<a>` may be nested inside ancestor `<g>` elements (from `start-group-node`
-in `scm/output-svg.scm:76-83`), so it is not always a direct SVG root child.
+`<a>` may be nested inside ancestor `<g>` elements (`start-group-node`, `scm/output-svg.scm:76-83`).
+**Translate is still absolute:** offset accumulates through the stencil tree before `grob-cause`
+(`lily/stencil-interpret.cc:40-43`) — no need to sum ancestor `<g>` transforms.
 
-**x position is absolute despite nesting:** the offset accumulates through the stencil expression
-tree before `settranslation` is called (`lily/stencil-interpret.cc:40-43` accumulates `translate-stencil`
-offsets into `o` before passing to `grob-cause`). The translate value inside `<a>` is absolute
-relative to the SVG root — no need to sum ancestor `<g>` transforms.
-Read `translate(x, y)` from the first child `<g>` of the `<a>` element → absolute x in
-LilyPond SVG units (default 1 unit = 1.7573 mm at 20pt staff size; scales with `set-global-staff-size`).
-Confirmed in `scm/output-svg.scm`: `settranslation` emits `<g transform="translate(x,y)">` and
-the point-and-click anchor opens before it, wrapping it as a child.
+**unit-length:** default 1 unit = 1.7573 mm (5pt at 20pt staff size). Changes with
+`set-global-staff-size`. Implementation derives `px_per_svgu` from SVG `width` attribute vs
+`viewBox` — robust to staff size changes.
+
+**xlink namespace:** lxml requires `{http://www.w3.org/1999/xlink}href`. Plain `href` finds nothing.
 
 Extract: `[(line, chr, x_absolute), ...]` for all `<a xlink:href="textedit://...">` elements.
 
@@ -140,85 +122,46 @@ Extract: `[(line, chr, x_absolute), ...]` for all `<a xlink:href="textedit://...
 
 ## MIDI parsing details
 
-**Multi-track:** LilyPond outputs one MIDI track per staff/instrument. Collect note_on events
-from ALL tracks, merge by tick before beat grouping.
+**Multi-track:** one track per staff. Collect note_on events from ALL tracks, merge by tick.
 
-**Tempo changes:** MIDI `SET_TEMPO` meta events are guaranteed on track 0. LilyPond's
-`Control_track_performer` (`lily/control-track-performer.cc:50-87`) intercepts all `Audio_tempo`
-events and writes them exclusively to the control track, which is always track 0. Also writes
-time signature and marker text. Accumulate tempo changes for correct tick→ms conversion —
-do not assume constant tempo. `mido` provides `MidiFile.ticks_per_beat`; iterate all messages
-in order, tracking current tempo and elapsed ticks.
+**Tempo:** `SET_TEMPO` events guaranteed on track 0 — `Control_track_performer`
+(`lily/control-track-performer.cc:50-87`) writes all tempo, time-sig, and marker events to
+the control track (always track 0). Accumulate for correct tick→ms conversion; don't assume
+constant tempo. Use `mido.merge_tracks()` iterating all messages; on `set_tempo` update and checkpoint.
 
-```python
-def ticks_to_ms(midi_file):
-    """Returns list of (tick, ms) tempo-map checkpoints."""
-    tempo = 500000  # default: 120 BPM
-    checkpoints = [(0, 0.0)]
-    elapsed_ticks = 0
-    elapsed_ms = 0.0
-    for msg in mido.merge_tracks(midi_file.tracks):
-        elapsed_ticks += msg.time
-        if msg.type == 'set_tempo':
-            elapsed_ms += mido.tick2second(msg.time, midi_file.ticks_per_beat, tempo) * 1000
-            tempo = msg.tempo
-            checkpoints.append((elapsed_ticks, elapsed_ms))
-    return checkpoints
-```
-
-**xlink namespace:** LilyPond SVG uses `xlink:href` (confirmed in `scm/output-svg.scm`).
-lxml requires full namespace URI: `{http://www.w3.org/1999/xlink}href`. Plain `href` finds nothing.
-
-```python
-XLINK = 'http://www.w3.org/1999/xlink'
-anchors = svg_root.findall(f'.//{{{XLINK}}}a[@{{{XLINK}}}href]', ...)
-# or simpler:
-for a in svg_root.iter('{http://www.w3.org/2000/svg}a'):
-    href = a.get('{http://www.w3.org/1999/xlink}href', '')
-```
+**Time signature:** also on track 0 via control track. Read `time_signature` meta for bar-timing.
 
 ---
 
 ## Timing map construction
 
-**Core problem:** SVG gives `(line,col) → x_pixel`. MIDI gives `tick → ms`. No direct link.
+**Core problem:** SVG gives `(line,col) → x`. MIDI gives `tick → ms`. No direct link.
 
-**Approach: order-based beat grouping**
+**Order-based beat grouping:**
+1. SVG anchors → `(x, line, col)` sorted by x (left→right = time)
+2. MIDI note_ons → `(tick, pitch)` sorted by tick
+3. Group SVG by x; group MIDI by tick
+4. Zip groups in order: `group[i].x ↔ group[i].tick`
+5. Apply tempo map: tick → ms
+6. Result: `[(ms, x), ...]` sorted by ms, deduplicated
 
-1. Parse SVG → list of `(x_pixel, line, col)` sorted by x (left→right = time order)
-2. Parse timing MIDI with `mido` → list of `(tick, pitch)` note_on events sorted by tick
-3. Group SVG anchors by x position (notes at same x = same beat/chord)
-4. Group MIDI note_ons by tick (same tick = same chord)
-5. Zip groups in order: `beat_groups[i].x ↔ midi_groups[i].tick`
-6. Apply MIDI tempo map: `tick → ms`
-7. Result: `timing_map = [(ms, x_pixel), ...]` sorted by ms, deduplicated
+**Grace notes:** `lily/midi-walker.cc` clamps negative delta-ticks to 0 → grace+main collapse to
+one MIDI group while SVG has two. When `svg_count > midi_count`: repeatedly merge the consecutive
+SVG pair with smallest x-gap (grace sits just left of main). Keep rightmost x after merge.
 
-**Chord/voice handling:**
-- Multiple noteheads at same x → one entry in timing_map (one x per beat moment)
-- Multi-voice at same beat: use x from the voice with the longer note value (drives scroll)
-- Chords: treat as single moment, take upper voice / any one notehead x
+**Bar-level timing (default):** smoother scroll for fast passages. Bar x-positions interpolated
+from note anchors. Bar start ticks: `0, ticks_per_bar, 2×ticks_per_bar, ...` where
+`ticks_per_bar = ticks_per_beat × numerator × 4 / denominator`. `--no-bar-timing` to revert.
 
-**Grace notes:** normally produce a separate MIDI beat group at a tick slightly before the main
-note — order-based grouping handles this naturally. Exception: `lily/midi-walker.cc` clamps
-negative delta-ticks to 0 (the "Going back in MIDI time" error path), collapsing grace+main into
-one MIDI beat group while SVG still has two separate anchor groups (grace visible left of main).
-
-**Reconciliation:** when `len(svg_groups) > len(midi_groups)`, repeatedly merge the consecutive
-SVG pair with the smallest x-gap (grace note sits just left of its main note → smallest gap).
-After merging, keep the rightmost x (main note position) as the scroll target. Grace note scroll
-position is irrelevant — cursor barely moves in the tiny anticipation window. Grace notes remain
-visible in the SVG strip.
-
-**Validation:** warn and reconcile on count mismatch rather than asserting.
+**`\pointAndClickTypes #'bar-event` is NOT viable:** BarLine grob created with `SCM_EOL` cause
+(`lily/bar-engraver.cc:530`) → grob-cause returns empty → no anchor ever emitted.
 
 ---
 
 ## Scroll behavior
 
-Matches MuseScore / Finale "follow playback" style:
-- **Cursor position:** fixed at ~45% from left edge of viewport (shows upcoming music)
-- **Scroll type:** smooth continuous interpolation between note onsets — never jumps
-- **Math:**
+- Cursor fixed at ~45% from left (shows upcoming music)
+- Smooth interpolation between note onsets
 
 ```python
 # At playback time T (ms):
@@ -229,192 +172,80 @@ score_x = timing_map[i].x + (timing_map[i+1].x - timing_map[i].x) * progress
 scroll_offset = max(0, score_x - viewport_width * 0.45)
 ```
 
-For MP4 frames: sample `scroll_offset` at each frame timestamp, crop PNG strip accordingly.
-For HTML: drive via `requestAnimationFrame`, set `element.scrollLeft = scroll_offset`.
-
 ---
 
 ## SVG → pixel coordinate conversion
 
-Timing map x values are in SVG viewBox units (LilyPond internal units).
-Pillow crop needs pixel coordinates. Conversion:
-
 ```python
-# Parse from SVG root element:
-#   width="Wmm"  height="Hmm"  viewBox="vx vy vw vh"
-svg_width_mm  = parse_mm(svg.attrib['width'])   # e.g. "450.23mm" → 450.23
+# From SVG root: width="Wmm" height="Hmm" viewBox="vx vy vw vh"
+svg_width_mm  = parse_mm(svg.attrib['width'])
 viewbox_width = float(svg.attrib['viewBox'].split()[2])
-render_dpi    = output_H / svg_height_mm * 25.4  # scale so strip height == output height
-px_per_mm     = render_dpi / 25.4
-px_per_svgu   = svg_width_mm * px_per_mm / viewbox_width
-
-# Convert timing map:
+render_dpi    = output_H / svg_height_mm * 25.4   # strip height == output height
+px_per_svgu   = svg_width_mm * (render_dpi / 25.4) / viewbox_width
 x_px = x_svgu * px_per_svgu
 ```
 
-cairosvg render call:
-```python
-cairosvg.svg2png(url=svg_path, write_to=png_path, dpi=render_dpi)
-```
-`render_dpi` derived from output height — strip rendered once at correct scale so
-`strip_img.height == output_H` exactly. No resize step needed.
+`cairosvg.svg2png(url=svg_path, write_to=png_path, dpi=render_dpi)` — rendered once, no resize.
 
 ---
 
 ## MP4 export
 
-1. Compute `render_dpi` from output height + SVG height-in-mm (see above)
-2. `cairosvg` renders SVG strip → full-strip PNG at `render_dpi` (rendered once)
-3. For each frame N at time `N / fps` seconds:
-   - Compute `scroll_offset_svgu` via timing map interpolation
-   - `scroll_offset_px = scroll_offset_svgu * px_per_svgu`
-   - `frame = strip_img.crop((scroll_offset_px, 0, scroll_offset_px + W, H))`
-4. Frames piped to `ffmpeg` stdin as PNG sequence
-5. Audio: `fluidsynth -F audio.wav soundfont.sf2 score-audio.midi`
-6. Mux: `ffmpeg -framerate FPS -i pipe:0 -i audio.wav -c:v libx264 -c:a aac output.mp4`
+1. Render SVG → full-strip PNG via cairosvg at `render_dpi` (once)
+2. Per frame: `strip_img.crop((scroll_offset_px, 0, scroll_offset_px + W, H))`
+3. Pipe PNG frames to ffmpeg stdin
+4. Audio: `fluidsynth -F audio.wav soundfont.sf2 score-audio.midi`
+5. Mux: `ffmpeg -framerate FPS -i pipe:0 -i audio.wav -c:v libx264 -c:a aac output.mp4`
 
-**Frame rate:** 30 fps default, configurable. Must produce even resolution (ffmpeg requirement).
-**Resolution:** user-configurable W × H, both must be multiples of 2.
+30 fps default. W × H must be multiples of 2.
 
----
-
-## HTML preview output (low priority)
-
-Self-contained single `.html` file:
-- SVG embedded inline
-- Timing map as JSON in `<script>`
-- JS: `requestAnimationFrame` timing clock, scroll via `element.scrollLeft`
-- Audio: link to pre-rendered WAV/MP3 (SF2 base64 impractical — files are 100MB+)
-- Play/pause button, tempo slider
-
-No server needed — opens directly in browser.
-
----
-
-## GUI (lyplex_gui.py)
-
-wxPython, single window:
-- `.ly` file picker
-- Soundfont picker (`.sf2`)
-- Resolution fields (W × H)
-- Tempo multiplier (scales timing map + ffmpeg atempo; does not re-render SVG)
-- Output folder
-- "Generate HTML" button — fast path, no audio render (disabled until lyplex_web.py done)
-- "Encode MP4" button — full pipeline, runs in background thread
-- Log output (streaming, carriage-return progress lines handled)
-- "Open HTML" / "Show in Explorer" buttons after completion
-
-**Accessibility (mirrors neothesia_gui.py patterns):**
-- `name=` on every interactive control (Windows UIA accessible name)
-- `StaticText` labels created before their controls (z-order = UIA LabeledBy)
-- `CreateStatusBar()` with pipeline status messages
-- `_on_char_hook` + `_focusable()` for Tab/Shift+Tab cycling within the panel
-
----
-
-## Strip PNG memory
-
-Full-strip PNG can be very large for long scores (10 min @ 1080px tall ≈ 200MB+).
-Pillow loads full image into RAM for cropping. Acceptable for typical teaching pieces (2–5 min).
-For very long scores: tile the strip render and stitch, or use cairosvg region rendering.
-Document as a known limitation; defer tiling until needed.
+**Strip PNG memory:** 10 min @ 1080px ≈ 200MB+. Pillow loads full strip. Acceptable for teaching
+pieces (2–5 min). Warns at >400 MB estimate. Tiling deferred.
 
 ---
 
 ## Patching strategy
 
-Patched `.ly` files written to `tempfile.mkdtemp()`. LilyPond run in that dir → outputs
-`<basename>.svg` and `<basename>.midi` alongside patched source.
+Patched `.ly` → `tempfile.mkdtemp()`. LilyPond outputs `<basename>-1.svg` and `<basename>.midi`.
 
-**`~` stripping:** `re.sub(r'~', '', source)` — safe. `~` is exclusively ties; never appears in markup.
-
-**`\pointAndClickTypes #'note-event` injection:** insert after the `\version "..."` line.
-Must be top-level, not inside `\score {}` or `\book {}`. Regex: find `\version "..."` line, append after it.
-
-**LilyPond output naming:** SVG output always appends `-N` page suffix → `<basename>-1.svg`.
-MIDI output → `<basename>.midi` (no suffix). With `system-count = 1` the score is one page → always one SVG file.
+- **`~` stripping:** `re.sub(r'~', '', source)` — safe (only TieEvent)
+- **`\pointAndClickTypes` injection:** after `\version "..."` line, top-level
+- **`\unfoldRepeats` stripping:** `re.sub(r"\\unfoldRepeats\b", "", source)`
+- **`system-count = 1`** in paper block → always one SVG page → always `<basename>-1.svg`
 
 ---
 
-## Upstream source references
+## Metronome click track (IMPLEMENTED)
 
-Key files in `upstream/lilypond/` for implementation reference:
-
-| File | What it tells us |
-|------|-----------------|
-| `scm/output-svg.scm` | Anchor format (`<a xlink:href="textedit://...">`), grob-cause logic, coordinate transforms |
-| `scm/framework-svg.scm` | SVG width/height = stencil extent × output-scale (not paper-width); `output-scale = unit-length` |
-| `scm/page.scm` | `make-page-stencil`: stencil x-extent = content unless `use-paper-size-for-page` is true (default) |
-| `scm/lily.scm` | `use-paper-size-for-page` defaults `#t`; override with `-dno-use-paper-size-for-page` |
-| `lily/constrained-breaking.cc` | Single-system auto-ragging: line 142-148 auto-sets ragged when one system + not stretched |
-| `scm/define-paper-variables.scm` | `system-count`, `ragged-right`, `line-width` paper variable definitions |
-| `lily/point-and-click.cc` | `textedit://FILE:LINE:CHR:COL` URI construction |
-| `scm/define-event-classes.scm` | Event hierarchy: `note-event` ≠ `rest-event`, `multi-measure-rest-event` |
-| `scm/midi.scm` | MIDI instrument names, channel assignments |
-| `lily/midi-walker.cc` | Grace note delta-tick clamping (`output_event` clamps negative delta to 0 → tick-0 collision) |
-| `lily/control-track-performer.cc` | Tempo/time-sig/marker always written to track 0 (control track) |
-| `lily/stencil-interpret.cc` | Offset accumulation for translate-stencil → SVG translate is absolute even when `<a>` is nested |
-| `ly/declarations-init.ly` | `~` defined only as TieEvent (line 85) — safe to strip globally |
-| `ly/music-functions-init.ly` | `\unfoldRepeats` signature: optional type list + music; wraps score/music not midi blocks |
-| `ly/property-init.ly` | `\pointAndClickTypes` accepts `symbol-list-or-symbol?` |
-| `scm/c++.scm` | `symbol-list-or-symbol?` predicate: list of symbols or single symbol |
-| `input/regression/point-and-click-types.ly` | `\pointAndClickTypes #'note-event` usage example |
+Opt-in `metronome=False` on `generate_mp4`. Python PCM synthesis (no extra dependencies).
+Beat positions from timing MIDI tempo map. Beat 1 accented (higher freq + amplitude).
+Click WAV mixed into audio via ffmpeg `amix` filter. `MetronomeDialog` in GUI exposes
+waveform, freq, duration, amplitude, count-in bars per click type.
 
 ---
 
-## Metronome click track (planned, not implemented)
+## HTML preview output (low priority, not started)
 
-Opt-in `metronome=False` param on `generate_mp4`. Synthesizes a WAV click track in Python and mixes it into the audio via ffmpeg. No new dependencies.
-
-**Beat positions:** parse timing MIDI (`ticks_per_beat`, tempo map) → enumerate beat ticks → convert to ms list. One beat every `ticks_per_beat` ticks.
-
-**Time signature:** read `time_signature` meta message from MIDI track 0 → numerator = beats per measure. Default 4/4 if absent.
-
-**Click synthesis (`render_click_wav`):**
-```python
-import wave, struct, math
-
-CLICK_SAMPLE_RATE = 44100
-CLICK_DURATION_S  = 0.02   # 20 ms burst
-CLICK_FREQ_HZ     = 1000   # beat 2/3/4
-ACCENT_FREQ_HZ    = 1500   # beat 1 (louder, higher)
-CLICK_AMPLITUDE   = 0.4    # 0..1, accent uses 0.6
-
-def render_click_wav(beat_ms_list, accented_indices, out_path):
-    n_samples_total = int((beat_ms_list[-1] / 1000.0 + 1.0) * CLICK_SAMPLE_RATE)
-    buf = [0.0] * n_samples_total
-    for i, ms in enumerate(beat_ms_list):
-        freq = ACCENT_FREQ_HZ if i in accented_indices else CLICK_FREQ_HZ
-        amp  = 0.6           if i in accented_indices else CLICK_AMPLITUDE
-        start = int(ms / 1000.0 * CLICK_SAMPLE_RATE)
-        n_click = int(CLICK_DURATION_S * CLICK_SAMPLE_RATE)
-        for k in range(n_click):
-            # half-sine envelope to avoid clicks
-            env = math.sin(math.pi * k / n_click)
-            buf[start + k] += amp * env * math.sin(2 * math.pi * freq * k / CLICK_SAMPLE_RATE)
-    with wave.open(str(out_path), 'w') as wf:
-        wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(CLICK_SAMPLE_RATE)
-        wf.writeframes(b''.join(struct.pack('<h', max(-32768, min(32767, int(s * 32767)))) for s in buf))
-```
-
-**Mix:** ffmpeg `-filter_complex "[0:a][1:a]amix=inputs=2:duration=first:weights=1 1"` mixes click WAV with instrument WAV before muxing into MP4. Click WAV path passed as second `-i` to existing ffmpeg mux call.
-
-**Scope of changes:**
-- `lyplex_tool.py`: add `render_click_wav(timing_midi_path, out_wav)` function; add `metronome: bool = False` to `generate_mp4`; update ffmpeg mux command to accept optional second audio input
-- `lyplex_gui.py`: one `CheckBox` "Add metronome click" in settings grid
-
-**Decision:** Option A (Python PCM synthesis) chosen over Option B (click MIDI → fluidsynth) because click quality is consistent regardless of SF2 content; no extra fluidsynth call; accent on beat 1 is trivial.
+Single `.html`: SVG inline + timing map JSON + JS `requestAnimationFrame` scroll + audio link.
 
 ---
 
-## Design decisions (resolved)
+## GUI (lyplex_gui.py)
 
-- **No `\version` in `.ly`:** abort with clear error — LilyPond always declares version; missing = broken file.
-- **No SF2 / fluidsynth:** hard error before pipeline starts.
-- **SVG/MIDI beat group mismatch (svg > midi):** reconcile by merging closest consecutive SVG pairs
-  (grace-note tick-0 collision path in `lily/midi-walker.cc`). Keep rightmost x after merge.
-- **SVG/MIDI beat group mismatch (svg < midi):** warn, ignore extra MIDI events.
-- **Multi-staff timing map:** staff with longest total note duration drives the timing map.
+wxPython single window: .ly picker, SF2 picker, W×H resolution, tempo multiplier, output folder,
+Generate HTML / Encode MP4 buttons, streaming log, Open/Explorer buttons after completion.
+`PipelineConfig` dataclass passed to `_run_pipeline`. `MetronomeDialog`, `WatermarkDialog` for
+overlay options. Accessible: `name=` on all controls, StaticText before each, status bar.
+
+---
+
+## Design decisions
+
+- **No `\version`:** abort with clear error
+- **No SF2/fluidsynth:** hard error before pipeline starts
+- **svg > midi groups:** merge closest consecutive SVG pair (grace note case); keep rightmost x
+- **svg < midi groups:** warn, truncate extra MIDI events
+- **Multi-staff timing:** staff with longest total note duration drives timing map
 
 ---
 
@@ -422,97 +253,45 @@ def render_click_wav(beat_ms_list, accented_indices, out_path):
 
 | File | Status |
 |------|--------|
-| `lyplex_tool.py` | Done — full pipeline, all features below |
-| `lyplex_gui.py` | Done — wxPython GUI, all settings wired, background thread, CR log |
+| `lyplex_tool.py` | Done — full pipeline |
+| `lyplex_gui.py` | Done — full GUI |
 | `lyplex_web.py` | Not started (low priority) |
 
-**lyplex_tool.py features:**
-- Full compile pipeline: SVG + timing MIDI + audio MIDI (3 patched variants)
-- `ClickResult` dataclass — `render_click_wav` returns it; `encode_mp4` takes `click_result`
-- `WatermarkParams` dataclass — logo overlay at any corner with opacity
-- `PipelineConfig` not in tool (lives in GUI)
-- Bar-level timing map (`use_bar_timing=True` default) — smoother scroll on fast passages
-- Grace note reconciliation — svg>midi mismatch merged via closest x-gap pairs
-- `cluster-note-event` included in `\pointAndClickTypes` injection — confirmed working (ClusterSpannerBeacon grob receives cause event)
-- Strip PNG memory warning at >400 MB estimate
-- Overlay: cursor line, note highlight, trail dots + tint, title/footer bands, watermark
-- Metronome click synthesis with count-in, accent/beat waveform/freq/amp params
-- Fade in/out frames
-- CLI entry point with `--no-bar-timing` flag
+`lyplex_tool.py`: SVG+MIDI+audio compile, bar-level timing map, grace note reconciliation,
+cluster-note-event anchors, memory warning, overlays (cursor/highlight/trail/watermark/bands),
+metronome click, fade in/out, CLI with `--no-bar-timing`.
 
-**lyplex_gui.py features:**
-- `PipelineConfig` dataclass — `_run_pipeline(self, config, stream)` replaces 28-arg signature
-- `_spin_double` module-level helper used by both `MetronomeDialog` and `WatermarkDialog`
-- `MetronomeDialog` — per-click waveform, freq, duration, amplitude + count-in bars
-- `WatermarkDialog` — logo path, corner position, opacity
-- All overlay options exposed as checkboxes/color pickers
-- Accessible controls (`name=` on all, StaticText before each, status bar)
+`lyplex_gui.py`: PipelineConfig dataclass, MetronomeDialog, WatermarkDialog, all overlay checkboxes/
+color pickers, accessible controls.
 
 ---
 
-## defineScrollingTask — bar-based timing map (IMPLEMENTED)
+## Upstream source references
 
-### Problem with current anchor-based approach
-
-`_select_dominant_staff_anchors` picks the SVG y-cluster closest in group count
-to the MIDI driving track (longest total duration). Works for chord names + melody.
-Open edge case: a staff with 32nd-note runs → MIDI picks it (most total duration) →
-SVG also picks it → scroll twitches on every 32nd note.
-
-### Solution implemented: Option C (hybrid snap)
-
-**Option B (`\pointAndClickTypes #'bar-event`) is not viable.**
-`lily/bar-engraver.cc` line 530: `bar_ = make_item("BarLine", SCM_EOL)` — BarLine grob
-created with no event cause. `grob-cause` in `scm/output-svg.scm` checks
-`(ly:grob-property grob 'cause)` → always empty for BarLine → no anchor ever emitted.
-
-**Option C (hybrid snap) is implemented.**
-
-Pipeline:
-1. Build note-level timing_map as before (existing `build_timing_map`)
-2. Parse `time_signature` meta from timing MIDI → `(numerator, denominator)`
-3. Compute bar start ticks: `0, ticks_per_bar, 2×ticks_per_bar, ...`  
-   where `ticks_per_bar = ticks_per_beat × numerator × 4 / denominator`
-4. For each bar tick → ms via `_tick_to_ms`; x,y via linear interpolation from note-level map
-5. Result: bar-level `timing_map` with one entry per bar
-
-Functions added:
-- `_parse_time_signature(midi_file) → (int, int)` — reads first `time_signature` meta
-- `_interp_timing_map(ms, timing_map, ms_keys) → (x, y)` — linear interp at arbitrary ms
-- `build_bar_timing_map(note_timing_map, tempo_map, ticks_per_beat, time_sig) → list[TimingEntry]`
-
-`extract_timing_midi` now returns 4-tuple: `(note_ons, tempo_map, ticks_per_beat, time_sig)`.
-
-`generate_mp4` has new param `use_bar_timing: bool = True` (default on).
-CLI: `--no-bar-timing` flag to revert to note-level.
-
-### Known limitation
-
-Bar x-positions are interpolated from note anchors — no true SVG bar-line geometry used.
-This works well when notes are dense (interpolation is close to actual bar line x).
-For bars with only long notes (whole notes, multi-measure rests), x interpolation is still correct
-because the note anchor at bar start maps exactly to bar start tick.
+| File | What it tells us |
+|------|-----------------|
+| `scm/output-svg.scm` | Anchor format, grob-cause logic, coordinate transforms, start-group-node |
+| `scm/framework-svg.scm` | SVG width/height = stencil extent × output-scale |
+| `scm/page.scm` | `make-page-stencil`: x-extent = content unless `use-paper-size-for-page` |
+| `scm/lily.scm` | `use-paper-size-for-page` defaults `#t` (line 477) |
+| `lily/constrained-breaking.cc` | Single-system auto-ragging (lines 142-148) |
+| `scm/define-paper-variables.scm` | `system-count`, `ragged-right`, `line-width` definitions |
+| `lily/point-and-click.cc` | `textedit://FILE:LINE:CHR:COL` URI construction |
+| `scm/define-event-classes.scm` | `note-event` ≠ `rest-event` ≠ `multi-measure-rest-event` |
+| `lily/midi-walker.cc` | Grace note delta-tick clamping → tick-0 collision |
+| `lily/control-track-performer.cc` | Tempo/time-sig/marker always on track 0 (lines 50-87) |
+| `lily/stencil-interpret.cc` | Translate offset accumulation → SVG translate is absolute (lines 40-43) |
+| `lily/cluster-engraver.cc` | ClusterSpannerBeacon gets cause event (line 110) |
+| `ly/declarations-init.ly` | `~` = TieEvent only (line 85) |
+| `ly/music-functions-init.ly` | `\unfoldRepeats` signature: optional type + music (lines 2635-2646) |
+| `ly/property-init.ly` | `\pointAndClickTypes` accepts `symbol-list-or-symbol?` (line 683) |
+| `scm/c++.scm` | `symbol-list-or-symbol?` predicate (lines 189-192) |
+| `input/regression/point-and-click-types.ly` | `\pointAndClickTypes` usage example |
 
 ---
 
 ## Known gaps / TODO
 
-- [x] Grace notes: tick-0 collision handled by merging closest SVG pairs when svg_count > midi_count
-- [x] Strip PNG memory: warns if estimated RAM > 400 MB; tiling deferred for very long scores
-- [x] Scroll clamp: before first note → offset=0; after last note → hold last position (implemented in scroll_offset_at)
-- [x] `~` stripping: `re.sub(r'~', '', source)` — safe, `~` is exclusively `TieEvent` (`ly/declarations-init.ly:85`); no other grammar use
-- [x] `cluster-note-event`: `\pointAndClickTypes #'(note-event cluster-note-event)` is valid — `pointAndClickTypes` accepts `symbol-list-or-symbol?` (scm/c++.scm:189, ly/property-init.ly:683). Cluster grob is `ClusterSpannerBeacon` (not ClusterSpanNote); it receives cause event `cluster_notes_[0]->self_scm()` (lily/cluster-engraver.cc:110) → point-and-click anchors ARE emitted for cluster notes
-- [x] Multi-staff (piano): noteheads at same beat share same x across staves — no special handling needed
-- [ ] Multi-page LilyPond output (paginated scroll) — harder than single strip; deferred
-- [x] Font embedding in cairosvg: falls back gracefully through Arial → DejaVu → Pillow default; logs warning when default used
-- [x] Lyrics / annotations in SVG: included automatically by LilyPond, no extra work
-- [x] Dynamics / hairpins: rendered by LilyPond, visible in SVG, no special handling
-- [x] SVG/MIDI mismatch (svg>midi): reconciled via closest-pair SVG merge (grace note case)
-- [x] SVG/MIDI mismatch (svg<midi): truncation is correct — can only animate to anchors that exist in SVG; extra MIDI events are for notes without visual anchors
-- [x] Metronome click track: mix synthesized clicks into audio at beat onsets
-
----
-
-## Pending refactors
-
-All done. No pending refactors.
+- [x] All implementation gaps resolved (grace notes, strip memory, scroll clamp, tie stripping,
+  cluster anchors, multi-staff, font fallback, mismatch reconciliation, metronome)
+- [ ] Multi-page LilyPond output (paginated scroll) — deferred
