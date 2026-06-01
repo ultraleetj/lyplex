@@ -271,7 +271,8 @@ color pickers, accessible controls.
 | File | What it tells us |
 |------|-----------------|
 | `scm/output-svg.scm` | Anchor format, grob-cause logic, coordinate transforms, start-group-node |
-| `scm/framework-svg.scm` | SVG width/height = stencil extent × output-scale |
+| `scm/framework-svg.scm` | SVG width/height = stencil extent × output-scale; page-count drives multi-file output |
+| `lily/paper-book.cc` | `output_stencils`: one SVG file per stencil (page), independent of system-count |
 | `scm/page.scm` | `make-page-stencil`: x-extent = content unless `use-paper-size-for-page` |
 | `scm/lily.scm` | `use-paper-size-for-page` defaults `#t` (line 477) |
 | `lily/constrained-breaking.cc` | Single-system auto-ragging (lines 142-148) |
@@ -294,4 +295,19 @@ color pickers, accessible controls.
 
 - [x] All implementation gaps resolved (grace notes, strip memory, scroll clamp, tie stripping,
   cluster anchors, multi-staff, font fallback, mismatch reconciliation, metronome)
-- [ ] Multi-page LilyPond output (paginated scroll) — deferred
+- [x] Bug fix: `_build_audio_cmd` — swapped `adelay` after `atempo` so music delay stays correct
+  when `tempo_multiplier != 1.0` with metronome count-in (`lyplex_tool.py:_build_audio_cmd`)
+
+**Multi-page SVG — CONFIRMED UNSAFE (upstream-verified):**
+`system-count = 1` constrains *line* breaking only (`lily/page-breaking.cc:796-808`). Page breaking
+is independent — `scm/framework-svg.scm` produces one SVG per stencil. Multiple SVG files can
+appear when:
+  - Score has explicit `\pageBreak`
+  - Titles/headers consume vertical space beyond `paper-height`
+  - System height + margins > paper-height
+
+Current code assumes only `<basename>-1.svg` exists. Safe mitigation options:
+  a. Detect and abort with clear error if `<basename>-2.svg` exists after compile
+  b. Stitch multiple SVG strips horizontally before render (full multi-page support)
+
+- [ ] Multi-page: at minimum add post-compile check; abort with error if >1 SVG page produced
