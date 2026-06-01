@@ -125,24 +125,49 @@ def _has_volta_repeats(source: str) -> bool:
 def _has_chord_names(source: str) -> bool:
     return bool(re.search(r"\\new\s+ChordNames\b", source))
 
+def _has_unfold_repeats(source: str) -> bool:
+    return bool(re.search(r"\\unfoldRepeats\b", source))
+
+def _should_unfold_repeats(source: str) -> bool:
+    """True when all score variants should have repeats unfolded.
+
+    Skipped when ChordNames is present: chord parts are typically written
+    linearly without matching volta structure, causing blank chord strips
+    and audio/visual mismatch when unfolded.
+    """
+    return (_has_volta_repeats(source) or _has_unfold_repeats(source)) and not _has_chord_names(source)
+
+_SCORE_BLOCK_TERMINATORS = re.compile(r"\\(layout|midi|header|paper)\b")
+
+def _find_closing_brace(source: str, start: int) -> int:
+    """Return index one past the closing '}' matching the '{' at source[start]."""
+    depth = 1
+    i = start + 1
+    n = len(source)
+    while i < n and depth > 0:
+        if source[i] == '{':
+            depth += 1
+        elif source[i] == '}':
+            depth -= 1
+        i += 1
+    return i
+
 def _wrap_score_body_with_unfold(body: str) -> str:
     """Insert \\unfoldRepeats around music portion of a \\score block body."""
     depth = 0
     i = 0
-    n = len(body)
-    while i < n:
+    while i < len(body):
         c = body[i]
         if c == '{':
             depth += 1
         elif c == '}':
             depth -= 1
-        elif depth == 0 and c == '\\' and i + 1 < n:
-            for kw in ('layout', 'midi', 'header', 'paper'):
-                end = i + 1 + len(kw)
-                if body[i + 1:end] == kw and (end >= n or not body[end].isalnum() and body[end] != '_'):
-                    music = body[:i].strip()
-                    rest = body[i:].strip()
-                    return f'\n  \\unfoldRepeats {{\n  {music}\n  }}\n  {rest}\n'
+        elif depth == 0:
+            m = _SCORE_BLOCK_TERMINATORS.match(body, i)
+            if m:
+                music = body[:i].strip()
+                rest = body[i:].strip()
+                return f'\n  \\unfoldRepeats {{\n  {music}\n  }}\n  {rest}\n'
         i += 1
     return f'\n  \\unfoldRepeats {{\n{body}\n  }}\n'
 
@@ -150,22 +175,13 @@ def _inject_unfold_repeats(source: str) -> str:
     """Wrap music content in each \\score block with \\unfoldRepeats { ... }."""
     result = []
     pos = 0
-    n = len(source)
     for m in re.finditer(r'\\score\s*\{', source):
         result.append(source[pos:m.end()])
-        content_start = m.end()
-        depth = 1
-        j = content_start
-        while j < n and depth > 0:
-            if source[j] == '{':
-                depth += 1
-            elif source[j] == '}':
-                depth -= 1
-            j += 1
-        body = source[content_start:j - 1]
+        end = _find_closing_brace(source, m.end() - 1)
+        body = source[m.end():end - 1]
         result.append(_wrap_score_body_with_unfold(body))
         result.append('}')
-        pos = j
+        pos = end
     result.append(source[pos:])
     return ''.join(result)
 
@@ -198,36 +214,13 @@ def _inject_all_bar_numbers(source: str) -> str:
     return source + snippet
 
 def _strip_paper_blocks(source: str) -> str:
-    """Remove all top-level \\paper { ... } blocks from source.
-
-    Uses a brace-depth counter to handle nested braces (e.g. markup inside
-    \\paper).  Needed when the original file has \\paper blocks that use
-    deprecated or version-incompatible constructs (e.g. print-page-number-
-    check-first removed in LilyPond 2.24).
-    """
+    """Remove all top-level \\paper { ... } blocks from source."""
     result = []
-    i = 0
-    n = len(source)
-    while i < n:
-        # Look for \paper followed by optional whitespace and '{'
-        m = re.search(r'\\paper\s*\{', source[i:])
-        if not m:
-            result.append(source[i:])
-            break
-        start = i + m.start()
-        brace_start = i + m.end() - 1  # position of the opening '{'
-        result.append(source[i:start])
-        # Walk forward counting braces to find the matching '}'
-        depth = 1
-        j = brace_start + 1
-        while j < n and depth > 0:
-            if source[j] == '{':
-                depth += 1
-            elif source[j] == '}':
-                depth -= 1
-            j += 1
-        # j is now one past the closing '}'
-        i = j  # skip the entire \paper { ... } block
+    pos = 0
+    for m in re.finditer(r'\\paper\s*\{', source):
+        result.append(source[pos:m.start()])
+        pos = _find_closing_brace(source, m.end() - 1)
+    result.append(source[pos:])
     return ''.join(result)
 
 
@@ -250,7 +243,7 @@ def _add_strip_paper(source: str) -> str:
 def patch_ly_svg(source: str, bar_numbers: bool = True) -> str:
     s = _strip_book_output_name(source)
     s = _strip_ties(s)
-    if _has_volta_repeats(source) and not _has_chord_names(source):
+    if _should_unfold_repeats(source):
         s = _strip_unfold_repeats(s)
         s = _inject_unfold_repeats(s)
     s = _inject_point_and_click_types(s)
@@ -263,20 +256,17 @@ def patch_ly_timing_midi(source: str) -> str:
     s = _strip_book_output_name(source)
     s = _strip_ties(s)
     s = _strip_unfold_repeats(s)
-    if _has_volta_repeats(source) and not _has_chord_names(source):
+    if _should_unfold_repeats(source):
         s = _inject_unfold_repeats(s)
     s = _add_strip_paper(s)
     return s
 
 def patch_ly_audio_midi(source: str) -> str:
     s = _strip_book_output_name(source)
-    if (_has_volta_repeats(source) or _has_unfold_repeats(source)) and not _has_chord_names(source):
+    if _should_unfold_repeats(source):
         s = _strip_unfold_repeats(s)
         s = _inject_unfold_repeats(s)
     return _add_strip_paper(s)
-
-def _has_unfold_repeats(source: str) -> bool:
-    return bool(re.search(r"\\unfoldRepeats\b", source))
 
 # ---------------------------------------------------------------------------
 # Header extraction
@@ -984,19 +974,18 @@ def render_click_wav(
         count_in_music_ms = count_in_bars * bar_ms
         count_in_ticks = count_in_bars * ticks_per_bar
         for t in range(count_in_ticks, 0, -ticks_per_beat):
-            t_ms = count_in_music_ms - t2ms(t) / tempo_multiplier
+            t_ms = count_in_music_ms - t2ms(t) / tempo_multiplier + _CLICK_PRE_ROLL_MS
             clicks.append((t_ms, t % ticks_per_bar == 0))
 
-    last_tick = max(tempo_map[-1][0], int(total_ms / 1000.0 * 2 * ticks_per_beat))
+    last_cp_tick, last_cp_ms, last_cp_tempo_us = tempo_map[-1]
+    extra_ticks = int(max(0.0, total_ms - last_cp_ms) * 1000 / last_cp_tempo_us * ticks_per_beat)
+    last_tick = last_cp_tick + extra_ticks
 
     for t in range(0, last_tick + ticks_per_beat, ticks_per_beat):
         t_ms = t2ms(t) / tempo_multiplier + count_in_music_ms
         if t_ms > total_ms + count_in_music_ms + 500:
             break
-        clicks.append((t_ms, t % ticks_per_bar == 0))
-
-    # Shift every click time forward by the pre-roll.
-    clicks = [(t_ms + _CLICK_PRE_ROLL_MS, accent) for t_ms, accent in clicks]
+        clicks.append((t_ms + _CLICK_PRE_ROLL_MS, t % ticks_per_bar == 0))
 
     # Total count-in delay seen by the muxer = musical count-in + pre-roll.
     count_in_ms = count_in_music_ms + _CLICK_PRE_ROLL_MS
@@ -1286,8 +1275,7 @@ def generate_mp4(
     _require_version_declaration(source, ly_path)
 
     header = _extract_header(source)
-    _can_unfold = not _has_chord_names(source)
-    needs_audio_midi = (_has_unfold_repeats(source) or _has_volta_repeats(source)) and _can_unfold
+    needs_audio_midi = _should_unfold_repeats(source)
 
     workdir = tempfile.mkdtemp(prefix="lyplex_")
     try:
