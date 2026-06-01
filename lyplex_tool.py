@@ -145,8 +145,9 @@ def _add_strip_paper(source: str) -> str:
     """Append single-strip paper block."""
     paper = r"""
 \paper {
-  paper-width = 5000\mm
-  line-width = 4990\mm
+  system-count = 1
+  paper-width = 9999\mm
+  line-width = 9989\mm
   paper-height = 250\mm
   top-margin = 5\mm
   bottom-margin = 5\mm
@@ -340,7 +341,7 @@ def _compile_lilypond(patched_source: str, basename: str, workdir: str, lilypond
     ly_file.write_text(patched_source, encoding="utf-8")
 
     lilypond = _require_binary("lilypond", lilypond_exe)
-    cmd = [lilypond, "--svg", "-dpoint-and-click", str(ly_file)]
+    cmd = [lilypond, "--svg", "-dpoint-and-click", "-dno-use-paper-size-for-page", str(ly_file)]
     result = subprocess.run(
         cmd,
         cwd=workdir,
