@@ -1260,7 +1260,7 @@ def generate_mp4(
     trail: bool = True,
     note_highlight: bool = True,
     highlight_color: tuple[int, int, int] = (50, 120, 220),
-    overlay_title: bool = False,
+    overlay_title: bool = True,
     overlay_footer: bool = False,
     use_bar_timing: bool = True,
     bar_numbers: bool = True,
@@ -1457,7 +1457,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LyPlex: LilyPond → scrolling MP4")
     parser.add_argument("ly_file", help=".ly input file")
     parser.add_argument("sf2_file", help=".sf2 soundfont")
-    parser.add_argument("output", help="output .mp4 path")
+    parser.add_argument("output", nargs="?", default=None,
+                        help="output .mp4 path (default: output/<stem>.mp4)")
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
@@ -1474,12 +1475,19 @@ if __name__ == "__main__":
                         help="Tempo multiplier (e.g. 0.75 = 75%%)")
     parser.add_argument("--fill-height", action="store_true",
                         help="Pad strip to requested height (centres content, white background)")
+    parser.add_argument("--no-title", dest="overlay_title", action="store_false", default=True,
+                        help="Hide title/composer overlay")
     args = parser.parse_args()
+
+    out_path = args.output or str(
+        Path("output") / (Path(args.ly_file).stem + ".mp4")
+    )
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
     generate_mp4(
         ly_path=args.ly_file,
         sf2_path=args.sf2_file,
-        out_path=args.output,
+        out_path=out_path,
         width=args.width,
         height=args.height,
         fps=args.fps,
@@ -1487,6 +1495,7 @@ if __name__ == "__main__":
         cursor_line=args.cursor,
         trail=args.trail,
         note_highlight=args.highlight,
+        overlay_title=args.overlay_title,
         bar_numbers=not args.no_bar_numbers,
         metronome=args.metronome,
         count_in_bars=args.count_in,

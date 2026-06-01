@@ -488,6 +488,7 @@ class MainFrame(wx.Frame):
         self._title_overlay_chk = chk_row(
             "Title overlay:", "Show title / composer (fixed, does not scroll)",
             hint=r"(from \header in .ly)")
+        self._title_overlay_chk.SetValue(True)
         self._footer_overlay_chk = chk_row(
             "Footer overlay:", "Show copyright / tagline (fixed, does not scroll)",
             hint=r"(from \header in .ly)")
@@ -601,6 +602,7 @@ class MainFrame(wx.Frame):
         if not out_dir:
             wx.MessageBox("Select an output folder.", "Input required", wx.ICON_WARNING)
             return
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
 
         width = self._width_ctrl.GetValue()
         height = self._height_ctrl.GetValue()
