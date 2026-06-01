@@ -327,8 +327,8 @@ color pickers, accessible controls.
   selection (most unique onset ticks); click `total_ms` from audio WAV duration
 - [x] Click pre-roll: 500ms silence before first beat prevents player startup clip
 - [x] Console windows: `CREATE_NO_WINDOW` on all subprocess calls (lilypond/fluidsynth/ffmpeg)
-- [x] CLI overlay flags: `--cursor`, `--trail`, `--highlight`, `--no-bar-numbers`, `--metronome`,
-  `--count-in`, `--tempo`
+- [x] CLI overlay flags: `--no-cursor`, `--no-trail`, `--no-highlight` (now default-on); `--no-bar-numbers`, `--metronome`,
+  `--count-in`, `--tempo`, `--fill-height`
 
 **Multi-page SVG — IMPLEMENTED (upstream-verified):**
 `system-count = 1` constrains *line* breaking only (`lily/page-breaking.cc:796-808`). Page breaking
@@ -347,23 +347,7 @@ from all pages with cumulative x-offsets, crops only last page, renders each pag
 concatenates horizontally with Pillow. `px_per_svgu` is constant across pages (same compile).
 
 - [x] Multi-page SVG: full horizontal concatenation implemented
-
-**TODO — vertical fill / fit-to-height option:**
-Currently `_crop_strip_height` auto-crops content to its natural height (e.g. 64px for
-single-staff at 360px requested). Useful for tight display, but awkward in video editors
-that expect a fixed output resolution (e.g. 1080p timeline).
-
-Add `fill_height: bool = False` (or `fit_height`) parameter to `generate_mp4`:
-- `False` (default) — current behaviour: crop to content, output is content-height tall
-- `True` — pad cropped content to the requested `height` using a white (or configurable)
-  background, centring the strip vertically. Output is always exactly `width × height`.
-
-Implementation: after `_crop_strip_height`, if `fill_height`:
-  ```python
-  canvas = Image.new("RGB", (strip_img.width, height), (255, 255, 255))
-  y_offset = (height - strip_img.height) // 2
-  canvas.paste(strip_img, (0, y_offset))
-  strip_img = canvas
-  height = canvas.height  # already == requested height
-  ```
-Expose in GUI as checkbox "Fit to output height" next to resolution fields.
+- [x] `fill_height`: `generate_mp4(fill_height=True)` pads cropped strip to requested height,
+  centres vertically on white background. GUI checkbox "Fit to height". CLI `--fill-height`.
+- [x] Bug fix: trail/highlight dot y-coordinate was in uncropped SVG pixel space; now subtracts
+  `strip_crop_top` (pixels removed by `_crop_strip_height`) so dots land on noteheads correctly.

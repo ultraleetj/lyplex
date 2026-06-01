@@ -73,6 +73,7 @@ class PipelineConfig:
     count_in_bars: int
     fade_frames: int
     watermark: WatermarkParams
+    fill_height: bool
     lilypond_exe: str | None
     ffmpeg_exe: str | None
     fluidsynth_exe: str | None
@@ -462,6 +463,9 @@ class MainFrame(wx.Frame):
 
         # --- overlay / option checkboxes ---
 
+        self._fill_height_chk = chk_row(
+            "Fit to height:", "Pad strip to output height (centres content, white background)")
+
         self._cursor_chk = chk_row(
             "Playback cursor:", "Show vertical cursor line")
         self._cursor_chk.SetValue(True)
@@ -632,6 +636,7 @@ class MainFrame(wx.Frame):
         count_in_bars = self._count_in
         fade_frames = self._fade_frames_ctrl.GetValue()
         watermark = self._watermark
+        fill_height = self._fill_height_chk.GetValue()
         lilypond_exe = self._lilypond_tc.GetValue().strip() or None
         ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
         fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
@@ -645,7 +650,7 @@ class MainFrame(wx.Frame):
             use_bar_timing=use_bar_timing, bar_numbers=bar_numbers,
             metronome=metronome, click_a=click_a, click_b=click_b,
             count_in_bars=count_in_bars, fade_frames=fade_frames,
-            watermark=watermark,
+            watermark=watermark, fill_height=fill_height,
             lilypond_exe=lilypond_exe, ffmpeg_exe=ffmpeg_exe, fluidsynth_exe=fluidsynth_exe,
         )
 
@@ -708,6 +713,7 @@ class MainFrame(wx.Frame):
                 count_in_bars=config.count_in_bars,
                 fade_frames=config.fade_frames,
                 watermark=config.watermark,
+                fill_height=config.fill_height,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=config.out_mp4)
         except Exception as exc:
