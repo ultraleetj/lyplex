@@ -1089,8 +1089,12 @@ def encode_mp4(
     fade_frames: int = 0,
     click_result: ClickResult | None = None,
     strip_crop_top: int = 0,
+    fill_y_offset: int = 0,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
+    # y pixel offset: strip_crop_top removed from top of render; fill_y_offset added back
+    # for centring on padded canvas. Net: entry.y * px_per_svgu - strip_crop_top + fill_y_offset
+    _y_dot_offset = fill_y_offset - strip_crop_top
 
     click_wav_path = click_result.wav_path if click_result else None
     count_in_ms = click_result.count_in_ms if click_result else 0.0
@@ -1179,7 +1183,7 @@ def encode_mp4(
                         n_past = len(past)
                         for idx, entry in enumerate(past):
                             ex_px = int(entry.x * px_per_svgu) - left
-                            ey_px = int(entry.y * px_per_svgu) - strip_crop_top
+                            ey_px = int(entry.y * px_per_svgu) + _y_dot_offset
                             r = TRAIL_DOT_RADIUS
                             if (-r <= ex_px <= width + r
                                     and -r <= ey_px <= height + r):
@@ -1196,7 +1200,7 @@ def encode_mp4(
                                 break
                             if entry.duration_ms > 0 and entry.ms + entry.duration_ms > t_ms:
                                 ex_px = int(entry.x * px_per_svgu) - left
-                                ey_px = int(entry.y * px_per_svgu) - strip_crop_top
+                                ey_px = int(entry.y * px_per_svgu) + _y_dot_offset
                                 r2 = HL_RADIUS * 2
                                 if (-r2 <= ex_px <= width + r2
                                         and -r2 <= ey_px <= height + r2):
@@ -1367,10 +1371,11 @@ def generate_mp4(
         strip_img, strip_crop_top = _crop_strip_height(strip_img)
         height = strip_img.height
 
+        fill_y_offset = 0
         if fill_height and strip_img.height < height_requested:
+            fill_y_offset = (height_requested - strip_img.height) // 2
             canvas = Image.new("RGB", (strip_img.width, height_requested), (255, 255, 255))
-            y_offset = (height_requested - strip_img.height) // 2
-            canvas.paste(strip_img, (0, y_offset))
+            canvas.paste(strip_img, (0, fill_y_offset))
             strip_img = canvas
             height = height_requested
 
@@ -1416,6 +1421,7 @@ def generate_mp4(
             strip_img, timing_map, px_per_svgu,
             wav_path, Path(out_path),
             strip_crop_top=strip_crop_top,
+            fill_y_offset=fill_y_offset,
             width=width, height=height, fps=fps,
             atempo=tempo_multiplier,
             ffmpeg_exe=ffmpeg_exe,
