@@ -15,6 +15,13 @@ Input: `.ly` file. Output: scrolling MP4 (primary). HTML preview is secondary / 
 **Dependencies:** `mido`, `cairosvg`, `Pillow`, `lxml`, `wxPython` (GUI only)
 External binaries: `lilypond`, `ffmpeg`, `fluidsynth` (audio) — must be on PATH
 
+**Local binary paths (dev machine):**
+- `lilypond`: `C:\Program Files\lilypond-2.24.4\bin\lilypond.exe`
+- `ffmpeg`: `C:\ffmpeg\ffmpeg.exe` (on PATH)
+- `fluidsynth`: `C:\inProgress\docs\lyplex\portable\bin\fluidsynth\fluidsynth.exe`
+- `sf2`: `C:\inProgress\docs\lyplex\soundfonts\GeneralUser-GS.sf2`
+- examples: `C:\inProgress\docs\lyplex\examples\`
+
 `python-ly` dropped: syntax parser only, cannot compute beat offsets.
 
 ---
