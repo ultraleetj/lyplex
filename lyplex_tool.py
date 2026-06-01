@@ -1038,7 +1038,8 @@ def _build_audio_cmd(
             ]
         else:
             segments = [f"[1:a]adelay={delay_ms}|{delay_ms}[music]"]
-        segments.append(f"[music][2:a]amix=inputs=2:duration=longest:normalize=0")
+        # normalize=0 requires ffmpeg 4.4+; omit for compatibility (amix will halve volumes)
+        segments.append(f"[music][2:a]amix=inputs=2:duration=longest")
         args += ["-filter_complex", ";".join(segments)]
     elif delay_ms > 0:
         if audio_filters:
