@@ -1275,7 +1275,7 @@ def generate_mp4(
     _require_version_declaration(source, ly_path)
 
     header = _extract_header(source)
-    needs_audio_midi = _should_unfold_repeats(source)
+    needs_audio_midi = True  # timing MIDI strips ties; audio always uses separate patch
 
     workdir = tempfile.mkdtemp(prefix="lyplex_")
     try:
