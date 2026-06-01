@@ -805,6 +805,31 @@ def render_strip_png(svg_path: Path, render_dpi: float, out_path: Path) -> None:
     cairosvg.svg2png(url=str(svg_path), write_to=str(out_path), dpi=render_dpi,
                      background_color="white")
 
+
+def _crop_strip_height(img: Image.Image, padding_px: int = 8) -> Image.Image:
+    """Crop vertical whitespace: paper-height may exceed actual content height.
+
+    Inverts the grayscale image so white→0 and ink→positive, then uses
+    getbbox() to find the bounding box of non-white content. Pads by
+    padding_px and ensures H.264-compatible even height.
+    """
+    inverted = img.convert("L").point(lambda p: 255 - p)
+    bbox = inverted.getbbox()
+    if not bbox:
+        return img
+    top = max(0, bbox[1] - padding_px)
+    bottom = min(img.height, bbox[3] + padding_px)
+    new_h = bottom - top
+    if new_h % 2 != 0:
+        if bottom < img.height:
+            bottom += 1
+        else:
+            top = max(0, top - 1)
+    cropped = img.crop((0, top, img.width, bottom))
+    if cropped.height != img.height:
+        print(f"[lyplex] auto-cropped strip height: {img.height}px -> {cropped.height}px")
+    return cropped
+
 # ---------------------------------------------------------------------------
 # Audio render
 # ---------------------------------------------------------------------------
@@ -1259,6 +1284,11 @@ def generate_mp4(
                 strip_img.paste(img, (x_px, 0))
                 x_px += img.width
             strip_img.save(str(strip_png))
+
+        # Auto-crop vertical whitespace (paper-height=250mm often exceeds content height).
+        # Updates height so overlays, encode_mp4, and RAM estimate use actual dimensions.
+        strip_img = _crop_strip_height(strip_img)
+        height = strip_img.height
 
         _strip_ram_mb = strip_img.width * height * 3 / (1024 * 1024)
         if _strip_ram_mb > 400:
