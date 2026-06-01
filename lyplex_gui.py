@@ -464,6 +464,7 @@ class MainFrame(wx.Frame):
 
         self._cursor_chk = chk_row(
             "Playback cursor:", "Show vertical cursor line")
+        self._cursor_chk.SetValue(True)
         self._cursor_color_cp = color_row(
             "Cursor color:", (220, 50, 50))
         grid.Add(wx.StaticText(panel, label="Cursor width (px):"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -473,11 +474,13 @@ class MainFrame(wx.Frame):
 
         self._note_highlight_chk = chk_row(
             "Note highlight:", "Flash active note/chord")
+        self._note_highlight_chk.SetValue(True)
         self._highlight_color_cp = color_row(
             "Highlight color:", (50, 120, 220))
 
         self._trail_chk = chk_row(
             "Note trail:", "Show fading dot trail + played-region tint")
+        self._trail_chk.SetValue(True)
         self._title_overlay_chk = chk_row(
             "Title overlay:", "Show title / composer (fixed, does not scroll)",
             hint=r"(from \header in .ly)")
