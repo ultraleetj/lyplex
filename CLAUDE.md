@@ -245,7 +245,8 @@ overlay options. Accessible: `name=` on all controls, StaticText before each, st
 - **No SF2/fluidsynth:** hard error before pipeline starts
 - **svg > midi groups:** merge closest consecutive SVG pair (grace note case); keep rightmost x
 - **svg < midi groups:** warn, truncate extra MIDI events
-- **Multi-staff timing:** staff with longest total note duration drives timing map
+- **Multi-staff timing:** all staves used for SVG anchor grouping — `_group_by_value` collapses
+  same-beat anchors via `round(x, 2)`. MIDI driving track = staff with longest total duration.
 
 ---
 
