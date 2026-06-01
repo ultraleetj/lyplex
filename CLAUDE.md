@@ -23,7 +23,7 @@ External binaries: `lilypond`, `ffmpeg`, `fluidsynth` (audio) — must be on PAT
 
 ```
 score.ly
-  ↓ lilypond --svg -dpoint-and-click
+  ↓ lilypond --svg -dpoint-and-click -dno-use-paper-size-for-page
 score.svg  +  score-timing.midi  +  score-audio.midi
   ↓ lxml (SVG parse)       ↓ mido (MIDI parse)
 note anchors + x-coords    note_on events + tick→ms timing
@@ -39,26 +39,40 @@ timing_map: [ {ms: N, x: PX}, ... ]
 ## LilyPond compile flags
 
 ```bash
-lilypond --svg -dpoint-and-click score.ly
+lilypond --svg -dpoint-and-click -dno-use-paper-size-for-page score.ly
 ```
 
 - `--svg` — SVG output
 - `-dpoint-and-click` — embeds `textedit://FILEPATH:LINE:COL:ENDCOL` on every note element in SVG
+- `-dno-use-paper-size-for-page` — SVG width/height = actual content extent, not paper-width.
+  Without this flag, SVG = full paper-width even if music is shorter → wasted render memory.
+  Verified in `scm/framework-svg.scm`: SVG dimensions come from stencil x/y extent; `scm/page.scm`
+  forces stencil to paper-width only when `use-paper-size-for-page` is true (default `#t`,
+  see `scm/lily.scm:477`).
 - LilyPond embeds full absolute paths in textedit:// URIs — no special handling needed on Windows
 
 Single-strip layout (scroll-friendly, required):
 ```lilypond
 \paper {
-  paper-width = 5000\mm
-  line-width = 4990\mm
+  system-count = 1
+  paper-width = 9999\mm
+  line-width = 9989\mm
   paper-height = 250\mm
   top-margin = 5\mm
   bottom-margin = 5\mm
   indent = 0
 }
 ```
-`line-width` must be ≤ `paper-width`; setting only `line-width` triggers LilyPond's
-"systems go off page" warning and it reverts to defaults. Both must be set.
+`system-count = 1` forces all music onto one horizontal strip.
+`line-width` must be ≤ `paper-width`; both must be set (setting only `line-width` triggers
+LilyPond's "systems go off page" warning and reverts to defaults).
+9999mm covers ~20 minutes at 120 BPM in 4/4 — sufficient for all teaching pieces.
+
+**Auto-ragging:** When `system-count = 1` and `ragged-right` is not explicitly set, LilyPond
+automatically uses natural (ragged) note spacing for the single system if it would be stretched
+(`constrained-breaking.cc:142-148`). No need to set `ragged-right = ##t` explicitly.
+Combined with `-dno-use-paper-size-for-page`, SVG width = exact music content width.
+
 Produces one long horizontal SVG strip — camera pans left→right.
 
 ---
@@ -304,7 +318,7 @@ Patched `.ly` files written to `tempfile.mkdtemp()`. LilyPond run in that dir �
 Must be top-level, not inside `\score {}` or `\book {}`. Regex: find `\version "..."` line, append after it.
 
 **LilyPond output naming:** SVG output always appends `-N` page suffix → `<basename>-1.svg`.
-MIDI output → `<basename>.midi` (no suffix). With `page-count = 1` we always get one SVG file.
+MIDI output → `<basename>.midi` (no suffix). With `system-count = 1` the score is one page → always one SVG file.
 
 ---
 
@@ -315,7 +329,11 @@ Key files in `upstream/lilypond/` for implementation reference:
 | File | What it tells us |
 |------|-----------------|
 | `scm/output-svg.scm` | Anchor format (`<a xlink:href="textedit://...">`), grob-cause logic, coordinate transforms |
-| `scm/framework-svg.scm` | SVG width/height in mm, viewBox in LilyPond units, `output-scale = unit-length` |
+| `scm/framework-svg.scm` | SVG width/height = stencil extent × output-scale (not paper-width); `output-scale = unit-length` |
+| `scm/page.scm` | `make-page-stencil`: stencil x-extent = content unless `use-paper-size-for-page` is true (default) |
+| `scm/lily.scm` | `use-paper-size-for-page` defaults `#t`; override with `-dno-use-paper-size-for-page` |
+| `lily/constrained-breaking.cc` | Single-system auto-ragging: line 142-148 auto-sets ragged when one system + not stretched |
+| `scm/define-paper-variables.scm` | `system-count`, `ragged-right`, `line-width` paper variable definitions |
 | `lily/point-and-click.cc` | `textedit://FILE:LINE:CHR:COL` URI construction |
 | `scm/define-event-classes.scm` | Event hierarchy: `note-event` ≠ `rest-event`, `multi-measure-rest-event` |
 | `scm/midi.scm` | MIDI instrument names, channel assignments |
