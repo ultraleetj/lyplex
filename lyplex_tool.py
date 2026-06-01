@@ -864,17 +864,17 @@ def render_strip_png(svg_path: Path, render_dpi: float, out_path: Path) -> None:
                      background_color="white")
 
 
-def _crop_strip_height(img: Image.Image, padding_px: int = 8) -> Image.Image:
-    """Crop vertical whitespace: paper-height may exceed actual content height.
+def _crop_strip_height(img: Image.Image, padding_px: int = 8) -> tuple["Image.Image", int]:
+    """Crop vertical whitespace; return (cropped_img, top_px_offset).
 
-    Inverts the grayscale image so white→0 and ink→positive, then uses
-    getbbox() to find the bounding box of non-white content. Pads by
-    padding_px and ensures H.264-compatible even height.
+    top_px_offset is the number of pixels removed from the top of the original
+    render — callers must subtract this from SVG-unit y coordinates before
+    drawing overlays on the cropped strip.
     """
     inverted = img.convert("L").point(lambda p: 255 - p)
     bbox = inverted.getbbox()
     if not bbox:
-        return img
+        return img, 0
     top = max(0, bbox[1] - padding_px)
     bottom = min(img.height, bbox[3] + padding_px)
     new_h = bottom - top
@@ -886,7 +886,7 @@ def _crop_strip_height(img: Image.Image, padding_px: int = 8) -> Image.Image:
     cropped = img.crop((0, top, img.width, bottom))
     if cropped.height != img.height:
         print(f"[lyplex] auto-cropped strip height: {img.height}px -> {cropped.height}px")
-    return cropped
+    return cropped, top
 
 # ---------------------------------------------------------------------------
 # Audio render
@@ -1088,6 +1088,7 @@ def encode_mp4(
     watermark_overlay: Image.Image | None = None,
     fade_frames: int = 0,
     click_result: ClickResult | None = None,
+    strip_crop_top: int = 0,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
 
@@ -1178,7 +1179,7 @@ def encode_mp4(
                         n_past = len(past)
                         for idx, entry in enumerate(past):
                             ex_px = int(entry.x * px_per_svgu) - left
-                            ey_px = int(entry.y * px_per_svgu)
+                            ey_px = int(entry.y * px_per_svgu) - strip_crop_top
                             r = TRAIL_DOT_RADIUS
                             if (-r <= ex_px <= width + r
                                     and -r <= ey_px <= height + r):
@@ -1195,7 +1196,7 @@ def encode_mp4(
                                 break
                             if entry.duration_ms > 0 and entry.ms + entry.duration_ms > t_ms:
                                 ex_px = int(entry.x * px_per_svgu) - left
-                                ey_px = int(entry.y * px_per_svgu)
+                                ey_px = int(entry.y * px_per_svgu) - strip_crop_top
                                 r2 = HL_RADIUS * 2
                                 if (-r2 <= ex_px <= width + r2
                                         and -r2 <= ey_px <= height + r2):
@@ -1265,6 +1266,7 @@ def generate_mp4(
     click_accent: ClickParams | None = None,
     click_beat: ClickParams | None = None,
     count_in_bars: int = 0,  # 0-2
+    fill_height: bool = False,
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -1361,8 +1363,16 @@ def generate_mp4(
 
         # Auto-crop vertical whitespace (paper-height=250mm often exceeds content height).
         # Updates height so overlays, encode_mp4, and RAM estimate use actual dimensions.
-        strip_img = _crop_strip_height(strip_img)
+        height_requested = height
+        strip_img, strip_crop_top = _crop_strip_height(strip_img)
         height = strip_img.height
+
+        if fill_height and strip_img.height < height_requested:
+            canvas = Image.new("RGB", (strip_img.width, height_requested), (255, 255, 255))
+            y_offset = (height_requested - strip_img.height) // 2
+            canvas.paste(strip_img, (0, y_offset))
+            strip_img = canvas
+            height = height_requested
 
         _strip_ram_mb = strip_img.width * height * 3 / (1024 * 1024)
         if _strip_ram_mb > 400:
@@ -1405,6 +1415,7 @@ def generate_mp4(
         encode_mp4(
             strip_img, timing_map, px_per_svgu,
             wav_path, Path(out_path),
+            strip_crop_top=strip_crop_top,
             width=width, height=height, fps=fps,
             atempo=tempo_multiplier,
             ffmpeg_exe=ffmpeg_exe,
@@ -1455,6 +1466,8 @@ if __name__ == "__main__":
                         help="Count-in bars before music (requires --metronome)")
     parser.add_argument("--tempo", type=float, default=1.0, metavar="MULT",
                         help="Tempo multiplier (e.g. 0.75 = 75%%)")
+    parser.add_argument("--fill-height", action="store_true",
+                        help="Pad strip to requested height (centres content, white background)")
     args = parser.parse_args()
 
     generate_mp4(
@@ -1472,4 +1485,5 @@ if __name__ == "__main__":
         metronome=args.metronome,
         count_in_bars=args.count_in,
         tempo_multiplier=args.tempo,
+        fill_height=args.fill_height,
     )
