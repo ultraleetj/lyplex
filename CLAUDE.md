@@ -445,7 +445,7 @@ because the note anchor at bar start maps exactly to bar start tick.
 - [x] Strip PNG memory: warns if estimated RAM > 400 MB; tiling deferred for very long scores
 - [x] Scroll clamp: before first note → offset=0; after last note → hold last position (implemented in scroll_offset_at)
 - [x] `~` stripping: `re.sub(r'~', '', source)` — safe, `~` is exclusively ties in practice
-- [ ] `cluster-note-event` excluded by `\pointAndClickTypes #'note-event` — clusters get no anchor (rare, deferred)
+- [~] `cluster-note-event`: injection changed to `#'(note-event cluster-note-event)` — anchors emitted IF LilyPond attaches a cause event to ClusterSpanNote grobs (unverified); if not, silently omitted, bar interpolation covers the gap
 - [x] Multi-staff (piano): noteheads at same beat share same x across staves — no special handling needed
 - [ ] Multi-page LilyPond output (paginated scroll) — harder than single strip; deferred
 - [x] Font embedding in cairosvg: falls back gracefully through Arial → DejaVu → Pillow default; logs warning when default used

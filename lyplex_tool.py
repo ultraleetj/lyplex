@@ -118,9 +118,11 @@ def _strip_book_output_name(source: str) -> str:
     return re.sub(r'\\bookOutputName\s+"[^"]*"', "", source)
 
 def _inject_point_and_click_types(source: str) -> str:
-    """Insert \pointAndClickTypes #'note-event after the \version line."""
+    """Insert \\pointAndClickTypes after the \\version line.
+    Includes cluster-note-event so tone cluster grobs get anchors if LilyPond
+    attaches a cause event to them (if not, they're silently omitted — no harm)."""
     def replacer(m):
-        return m.group(0) + "\n\\pointAndClickTypes #'note-event"
+        return m.group(0) + "\n\\pointAndClickTypes #'(note-event cluster-note-event)"
     result, n = re.subn(r'(\\version\s+"[^"]*")', replacer, source, count=1)
     if n == 0:
         raise ValueError("Could not inject \\pointAndClickTypes: no \\version line found.")
