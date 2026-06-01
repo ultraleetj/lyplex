@@ -1077,11 +1077,11 @@ def encode_mp4(
     fps: int = DEFAULT_FPS,
     atempo: float = 1.0,
     ffmpeg_exe: str | None = None,
-    cursor_line: bool = False,
+    cursor_line: bool = True,
     cursor_color: tuple[int, int, int] = (220, 50, 50),
     cursor_width: int = 2,
-    trail: bool = False,
-    note_highlight: bool = False,
+    trail: bool = True,
+    note_highlight: bool = True,
     highlight_map: list[TimingEntry] | None = None,
     highlight_color: tuple[int, int, int] = (50, 120, 220),
     title_footer_overlay: Image.Image | None = None,
@@ -1249,11 +1249,11 @@ def generate_mp4(
     lilypond_exe: str | None = None,
     ffmpeg_exe: str | None = None,
     fluidsynth_exe: str | None = None,
-    cursor_line: bool = False,
+    cursor_line: bool = True,
     cursor_color: tuple[int, int, int] = (220, 50, 50),
     cursor_width: int = 2,
-    trail: bool = False,
-    note_highlight: bool = False,
+    trail: bool = True,
+    note_highlight: bool = True,
     highlight_color: tuple[int, int, int] = (50, 120, 220),
     overlay_title: bool = False,
     overlay_footer: bool = False,
@@ -1446,9 +1446,9 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--no-bar-timing", action="store_true",
                         help="Use note-level timing instead of bar-level")
-    parser.add_argument("--cursor", action="store_true", help="Show cursor line")
-    parser.add_argument("--trail", action="store_true", help="Show past-beat trail dots")
-    parser.add_argument("--highlight", action="store_true", help="Highlight active note region")
+    parser.add_argument("--no-cursor", dest="cursor", action="store_false", default=True, help="Hide cursor line")
+    parser.add_argument("--no-trail", dest="trail", action="store_false", default=True, help="Hide past-beat trail dots")
+    parser.add_argument("--no-highlight", dest="highlight", action="store_false", default=True, help="Hide active note highlight")
     parser.add_argument("--no-bar-numbers", action="store_true", help="Hide bar numbers in score")
     parser.add_argument("--metronome", action="store_true", help="Add metronome click track")
     parser.add_argument("--count-in", type=int, default=0, metavar="BARS",
