@@ -298,7 +298,7 @@ color pickers, accessible controls.
 - [x] Bug fix: `_build_audio_cmd` — swapped `adelay` after `atempo` so music delay stays correct
   when `tempo_multiplier != 1.0` with metronome count-in (`lyplex_tool.py:_build_audio_cmd`)
 
-**Multi-page SVG — CONFIRMED UNSAFE (upstream-verified):**
+**Multi-page SVG — IMPLEMENTED (upstream-verified):**
 `system-count = 1` constrains *line* breaking only (`lily/page-breaking.cc:796-808`). Page breaking
 is independent — `scm/framework-svg.scm` produces one SVG per stencil. Multiple SVG files can
 appear when:
@@ -306,8 +306,12 @@ appear when:
   - Titles/headers consume vertical space beyond `paper-height`
   - System height + margins > paper-height
 
-Current code assumes only `<basename>-1.svg` exists. Safe mitigation options:
-  a. Detect and abort with clear error if `<basename>-2.svg` exists after compile
-  b. Stitch multiple SVG strips horizontally before render (full multi-page support)
+LilyPond SVG naming (`scm/framework-svg.scm:119-120`):
+  - Single page → `<basename>.svg` (no suffix)
+  - Multi-page → `<basename>-1.svg`, `<basename>-2.svg`, ... (1-indexed)
 
-- [ ] Multi-page: at minimum add post-compile check; abort with error if >1 SVG page produced
+`compile_svg` returns `list[Path]` sorted by page number. `generate_mp4` extracts anchors
+from all pages with cumulative x-offsets, crops only last page, renders each page PNG and
+concatenates horizontally with Pillow. `px_per_svgu` is constant across pages (same compile).
+
+- [x] Multi-page SVG: full horizontal concatenation implemented

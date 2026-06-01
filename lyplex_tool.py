@@ -357,19 +357,24 @@ def _compile_lilypond(patched_source: str, basename: str, workdir: str, lilypond
             f"LilyPond compilation failed (exit {result.returncode})"
         )
 
-def compile_svg(source: str, workdir: str, lilypond_exe: str | None = None, bar_numbers: bool = True) -> Path:
+def compile_svg(source: str, workdir: str, lilypond_exe: str | None = None, bar_numbers: bool = True) -> list[Path]:
+    """Compile SVG and return list of page paths sorted by page number.
+
+    LilyPond naming: single page → score-svg.svg; multi-page → score-svg-1.svg, score-svg-2.svg, ...
+    (scm/framework-svg.scm: file-suffix is empty when page-count=1, else '-N')
+    """
     patched = patch_ly_svg(source, bar_numbers=bar_numbers)
     _compile_lilypond(patched, "score-svg", workdir, lilypond_exe)
-    # LilyPond names output after the .ly basename, but \bookOutputName can override it.
-    # Glob for any SVG produced (exclude the patched source file itself).
-    svgs = [f for f in sorted(Path(workdir).glob("*.svg")) if f.stem != "score-svg"]
+
+    def _page_num(p: Path) -> int:
+        m = re.search(r"-(\d+)$", p.stem)
+        return int(m.group(1)) if m else 0  # 0 = no suffix = single page
+
+    svgs = sorted(Path(workdir).glob("score-svg*.svg"), key=_page_num)
     if not svgs:
-        # fallback: maybe it IS named score-svg
-        svgs = list(Path(workdir).glob("*.svg"))
+        svgs = sorted(Path(workdir).glob("*.svg"), key=_page_num)
     if svgs:
-        if len(svgs) > 1:
-            print(f"[lyplex] WARNING: multiple SVGs found, using {svgs[0].name}")
-        return svgs[0]
+        return svgs
     files = sorted(Path(workdir).iterdir())
     listing = "\n  ".join(f.name for f in files) or "(empty)"
     raise RuntimeError(
@@ -1182,7 +1187,9 @@ def generate_mp4(
 
         # Compile
         print("[lyplex] compiling SVG...")
-        svg_path = compile_svg(source, workdir, lilypond_exe, bar_numbers=bar_numbers)
+        svg_paths = compile_svg(source, workdir, lilypond_exe, bar_numbers=bar_numbers)
+        if len(svg_paths) > 1:
+            print(f"[lyplex] {len(svg_paths)} SVG pages — concatenating strips")
 
         print("[lyplex] compiling timing MIDI...")
         timing_midi_path = compile_timing_midi(source, workdir, lilypond_exe)
@@ -1193,11 +1200,16 @@ def generate_mp4(
         else:
             audio_midi_path = timing_midi_path
 
-        # Parse SVG once — shared between anchor extraction and scale computation
-        svg_root = etree.parse(str(svg_path)).getroot()
-
+        # Parse all SVG pages; extract anchors with cumulative x-offsets across pages.
+        svg_roots = [etree.parse(str(p)).getroot() for p in svg_paths]
         print("[lyplex] extracting SVG anchors...")
-        anchors = _extract_anchors_from_root(svg_root)
+        anchors = []
+        x_offset_svgu = 0.0
+        for root in svg_roots:
+            for a in _extract_anchors_from_root(root):
+                anchors.append(dc_replace(a, x=a.x + x_offset_svgu))
+            vb = root.get("viewBox", "0 0 0 0").split()
+            x_offset_svgu += float(vb[2]) if len(vb) >= 3 else 0.0
         if not anchors:
             raise RuntimeError("No note anchors found in SVG. Check \\pointAndClickTypes injection.")
 
@@ -1220,25 +1232,40 @@ def generate_mp4(
         if abs(tempo_multiplier - 1.0) > 1e-6:
             timing_map = [dc_replace(e, ms=e.ms / tempo_multiplier) for e in timing_map]
 
-        # Crop SVG to content width before rendering
-        max_content_x = max(a.x for a in anchors)
-        svg_path, svg_root = _crop_svg_to_content(svg_path, svg_root, max_content_x)
+        # Crop last page to content width (removes trailing paper-width whitespace).
+        last_anchors_local = _extract_anchors_from_root(svg_roots[-1])
+        if last_anchors_local:
+            max_x_last = max(a.x for a in last_anchors_local)
+            svg_paths[-1], svg_roots[-1] = _crop_svg_to_content(svg_paths[-1], svg_roots[-1], max_x_last)
 
-        # Scale
-        render_dpi, px_per_svgu = _svg_scale_from_root(svg_root, height)
+        # Scale — px_per_svgu is constant across pages (same LilyPond compile).
+        render_dpi, px_per_svgu = _svg_scale_from_root(svg_roots[0], height)
 
-        # Render strip
+        # Render each page to PNG, then concatenate horizontally.
         strip_png = Path(workdir) / "strip.png"
-        _svg_w_mm = _parse_mm(svg_root.get("width", "0mm"))
-        _svg_h_mm = max(_parse_mm(svg_root.get("height", "1mm")), 1.0)
-        _strip_w_px = int(_svg_w_mm / _svg_h_mm * height)
-        _strip_ram_mb = _strip_w_px * height * 3 / (1024 * 1024)
-        if _strip_ram_mb > 400:
-            print(f"[lyplex] WARNING: estimated strip PNG ~{_strip_ram_mb:.0f} MB "
-                  f"({_strip_w_px}×{height}px). Very long score — may exhaust RAM.")
         print(f"[lyplex] rendering strip PNG at {render_dpi:.1f} dpi...")
-        render_strip_png(svg_path, render_dpi, strip_png)
-        strip_img = Image.open(str(strip_png)).convert("RGB")
+        if len(svg_paths) == 1:
+            render_strip_png(svg_paths[0], render_dpi, strip_png)
+            strip_img = Image.open(str(strip_png)).convert("RGB")
+        else:
+            page_imgs: list[Image.Image] = []
+            for i, sp in enumerate(svg_paths):
+                page_png = Path(workdir) / f"strip-{i}.png"
+                render_strip_png(sp, render_dpi, page_png)
+                page_imgs.append(Image.open(str(page_png)).convert("RGB"))
+            total_w = sum(img.width for img in page_imgs)
+            page_h = max(img.height for img in page_imgs)
+            strip_img = Image.new("RGB", (total_w, page_h), (255, 255, 255))
+            x_px = 0
+            for img in page_imgs:
+                strip_img.paste(img, (x_px, 0))
+                x_px += img.width
+            strip_img.save(str(strip_png))
+
+        _strip_ram_mb = strip_img.width * height * 3 / (1024 * 1024)
+        if _strip_ram_mb > 400:
+            print(f"[lyplex] WARNING: strip PNG ~{_strip_ram_mb:.0f} MB "
+                  f"({strip_img.width}×{height}px). Very long score — may exhaust RAM.")
 
         # Audio
         wav_path = Path(workdir) / "audio.wav"
