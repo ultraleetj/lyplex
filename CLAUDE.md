@@ -222,6 +222,14 @@ Beat positions from timing MIDI tempo map. Beat 1 accented (higher freq + amplit
 Click WAV mixed into audio via ffmpeg `amix` filter. `MetronomeDialog` in GUI exposes
 waveform, freq, duration, amplitude, count-in bars per click type.
 
+`_CLICK_PRE_ROLL_MS = 500` silence prepended so first click is never at sample 0 (avoids
+player startup clip). `count_in_ms` returned in `ClickResult` includes the pre-roll so
+music audio `adelay` is bumped by the same amount and stays in sync.
+
+`total_ms` for click generation uses the rendered audio WAV duration (read with `wave`
+module after fluidsynth), not `note_timing_map[-1].ms`. This ensures click covers the full
+unfolded piece when `\unfoldRepeats` makes the audio MIDI longer than the timing MIDI.
+
 ---
 
 ## HTML preview output (low priority, not started)
@@ -245,6 +253,16 @@ overlay options. Accessible: `name=` on all controls, StaticText before each, st
 - **No SF2/fluidsynth:** hard error before pipeline starts
 - **svg > midi groups:** merge closest consecutive SVG pair (grace note case); keep rightmost x
 - **svg < midi groups:** warn, truncate extra MIDI events
+- **volta repeats:** `_has_volta_repeats` detects `\repeat volta`. All three variants (SVG,
+  timing MIDI, audio MIDI) get `\unfoldRepeats { ... }` injected around `\score` music content
+  via `_inject_unfold_repeats`. SVG strip shows the full unfolded piece; timing and audio MIDI
+  both play all repeats. If chord/accompaniment parts lack matching volta structure, LilyPond
+  pads the shorter part with silence — acceptable.
+- **driving track:** MIDI track with most unique onset ticks (not highest total duration),
+  preventing chord-voice tracks (multi-note-per-tick, long note values) from outscoring melody.
+- **subprocess console windows:** `_WIN_NO_WINDOW = {"creationflags": CREATE_NO_WINDOW}` on
+  Windows (empty dict elsewhere), applied to all three subprocess calls (lilypond, fluidsynth,
+  ffmpeg) so GUI doesn't lose focus.
 - **Multi-staff timing:** all staves used for SVG anchor grouping — `_group_by_value` collapses
   same-beat anchors via `round(x, 2)`. MIDI driving track = staff with longest total duration.
 
@@ -298,6 +316,12 @@ color pickers, accessible controls.
   cluster anchors, multi-staff, font fallback, mismatch reconciliation, metronome)
 - [x] Bug fix: `_build_audio_cmd` — swapped `adelay` after `atempo` so music delay stays correct
   when `tempo_multiplier != 1.0` with metronome count-in (`lyplex_tool.py:_build_audio_cmd`)
+- [x] `\repeat volta` unfolding: inject `\unfoldRepeats` into all variants; fix driving-track
+  selection (most unique onset ticks); click `total_ms` from audio WAV duration
+- [x] Click pre-roll: 500ms silence before first beat prevents player startup clip
+- [x] Console windows: `CREATE_NO_WINDOW` on all subprocess calls (lilypond/fluidsynth/ffmpeg)
+- [x] CLI overlay flags: `--cursor`, `--trail`, `--highlight`, `--no-bar-numbers`, `--metronome`,
+  `--count-in`, `--tempo`
 
 **Multi-page SVG — IMPLEMENTED (upstream-verified):**
 `system-count = 1` constrains *line* breaking only (`lily/page-breaking.cc:796-808`). Page breaking
