@@ -1053,10 +1053,13 @@ def _build_audio_cmd(
     click_wav_path: Path | None,
     delay_ms: float,
     audio_filters: str | None,
+    volume: float = 1.0,
 ) -> list[str]:
     """Return ffmpeg audio-related args (extra -i inputs + filter flags)."""
     args: list[str] = []
     delay_str = f"{delay_ms:.3f}"
+    vol_filter = f"volume={volume:.4f}" if abs(volume - 1.0) > 1e-4 else None
+
     if click_wav_path is not None:
         args += ["-i", str(click_wav_path)]
         # atempo before adelay: adelay operates in output-domain ms after speed change,
@@ -1069,16 +1072,21 @@ def _build_audio_cmd(
         else:
             segments = [f"[1:a]adelay={delay_str}|{delay_str}[music]"]
         # normalize=0 requires ffmpeg 4.4+; omit for compatibility (amix will halve volumes)
-        segments.append(f"[music][2:a]amix=inputs=2:duration=longest")
-        args += ["-filter_complex", ";".join(segments)]
-    elif delay_ms > 0:
-        if audio_filters:
-            chain = f"[1:a]{audio_filters},adelay={delay_str}|{delay_str}"
+        amix = "amix=inputs=2:duration=longest"
+        if vol_filter:
+            segments.append(f"[music][2:a]{amix}[mixed];[mixed]{vol_filter}")
         else:
-            chain = f"[1:a]adelay={delay_str}|{delay_str}"
-        args += ["-filter_complex", chain]
-    elif audio_filters:
-        args += ["-filter:a", audio_filters]
+            segments.append(f"[music][2:a]{amix}")
+        args += ["-filter_complex", ";".join(segments)]
+    elif delay_ms > 0 or audio_filters or vol_filter:
+        parts: list[str] = []
+        if audio_filters:
+            parts.append(audio_filters)
+        if delay_ms > 0:
+            parts.append(f"adelay={delay_str}|{delay_str}")
+        if vol_filter:
+            parts.append(vol_filter)
+        args += ["-filter_complex", f"[1:a]{','.join(parts)}"]
     return args
 
 
@@ -1120,6 +1128,7 @@ def encode_mp4(
     click_result: ClickResult | None = None,
     strip_crop_top: int = 0,
     fill_y_offset: int = 0,
+    volume: float = 1.5,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
     # y pixel offset: strip_crop_top removed from top of render; fill_y_offset added back
@@ -1146,7 +1155,7 @@ def encode_mp4(
         "-i", "pipe:0",
         "-i", str(wav_path),
     ]
-    ffmpeg_cmd += _build_audio_cmd(click_wav_path, delay_ms, audio_filters)
+    ffmpeg_cmd += _build_audio_cmd(click_wav_path, delay_ms, audio_filters, volume=volume)
     ffmpeg_cmd += ["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
                    "-shortest", str(out_path)]
 
@@ -1301,6 +1310,7 @@ def generate_mp4(
     click_beat: ClickParams | None = None,
     count_in_bars: int = 0,  # 0-2
     fill_height: bool = False,
+    volume: float = 1.5,
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -1477,6 +1487,7 @@ def generate_mp4(
             watermark_overlay=wm_overlay,
             fade_frames=fade_frames,
             click_result=click_result,
+            volume=volume,
         )
 
         print(f"[lyplex] done: {out_path}")
