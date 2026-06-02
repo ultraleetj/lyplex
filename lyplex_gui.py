@@ -74,6 +74,8 @@ class PipelineConfig:
     fade_frames: int
     watermark: WatermarkParams
     fill_height: bool
+    volume_db: float
+    click_volume_db: float
     lilypond_exe: str | None
     ffmpeg_exe: str | None
     fluidsynth_exe: str | None
@@ -86,7 +88,8 @@ class PipelineConfig:
 class MetronomeDialog(wx.Dialog):
     _WAVEFORMS = ["sine", "square", "triangle", "saw"]
 
-    def __init__(self, parent, click_a: ClickParams, click_b: ClickParams, count_in: int):
+    def __init__(self, parent, click_a: ClickParams, click_b: ClickParams, count_in: int,
+                 click_volume_db: float = -3.0):
         super().__init__(parent, title="Metronome Settings",
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         panel = wx.Panel(self)
@@ -138,6 +141,10 @@ class MetronomeDialog(wx.Dialog):
         self._count_in_spin = wx.SpinCtrl(panel, min=0, max=2, initial=count_in, name="Count-in bars")
         _row("Bars:", self._count_in_spin, "0 = no count-in")
 
+        _section("Mix level")
+        self._click_vol = _spin_double(panel, -24.0, 12.0, click_volume_db, 0.5, "Click volume dB")
+        _row("Click volume:", self._click_vol, "dB  (relative to music)")
+
         btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         root = wx.BoxSizer(wx.VERTICAL)
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 12)
@@ -146,7 +153,7 @@ class MetronomeDialog(wx.Dialog):
         panel.SetSizer(root)
         root.Fit(self)
 
-    def get_values(self) -> tuple[ClickParams, ClickParams, int]:
+    def get_values(self) -> tuple[ClickParams, ClickParams, int, float]:
         a = ClickParams(
             freq_hz=float(self._a_freq.GetValue()),
             waveform=self._a_wave.GetStringSelection(),
@@ -159,7 +166,7 @@ class MetronomeDialog(wx.Dialog):
             duration_ms=float(self._b_dur.GetValue()),
             amplitude=self._b_amp.GetValue(),
         )
-        return a, b, self._count_in_spin.GetValue()
+        return a, b, self._count_in_spin.GetValue(), self._click_vol.GetValue()
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +280,7 @@ class MainFrame(wx.Frame):
         self._click_a = ClickParams(freq_hz=1500.0, waveform="sine", duration_ms=20.0, amplitude=0.6)
         self._click_b = ClickParams(freq_hz=1000.0, waveform="sine", duration_ms=20.0, amplitude=0.4)
         self._count_in = 0
+        self._click_volume_db = -3.0
         self._watermark = WatermarkParams()
         self._build_ui()
         self.CreateStatusBar()
@@ -525,6 +533,11 @@ class MainFrame(wx.Frame):
         grid.Add(self._fade_frames_ctrl)
         grid.Add(wx.StaticText(panel, label="(0 = no fade, 15 = 0.5s at 30fps)"), 0, wx.ALIGN_CENTER_VERTICAL)
 
+        grid.Add(wx.StaticText(panel, label="Music volume (dB):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._volume_db_ctrl = _spin_double(panel, -12.0, 30.0, 14.5, 0.5, "Music volume dB")
+        grid.Add(self._volume_db_ctrl)
+        grid.Add(wx.StaticText(panel, label="dB boost applied to output mix"), 0, wx.ALIGN_CENTER_VERTICAL)
+
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
         # Action buttons
@@ -652,6 +665,7 @@ class MainFrame(wx.Frame):
         fade_frames = self._fade_frames_ctrl.GetValue()
         watermark = self._watermark
         fill_height = self._fill_height_chk.GetValue()
+        volume_db = self._volume_db_ctrl.GetValue()
         lilypond_exe = self._lilypond_tc.GetValue().strip() or None
         ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
         fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
@@ -666,6 +680,7 @@ class MainFrame(wx.Frame):
             metronome=metronome, click_a=click_a, click_b=click_b,
             count_in_bars=count_in_bars, fade_frames=fade_frames,
             watermark=watermark, fill_height=fill_height,
+            volume_db=volume_db, click_volume_db=self._click_volume_db,
             lilypond_exe=lilypond_exe, ffmpeg_exe=ffmpeg_exe, fluidsynth_exe=fluidsynth_exe,
         )
 
@@ -683,9 +698,10 @@ class MainFrame(wx.Frame):
         ).start()
 
     def _on_metronome_settings(self, _event) -> None:
-        dlg = MetronomeDialog(self, self._click_a, self._click_b, self._count_in)
+        dlg = MetronomeDialog(self, self._click_a, self._click_b, self._count_in,
+                              self._click_volume_db)
         if dlg.ShowModal() == wx.ID_OK:
-            self._click_a, self._click_b, self._count_in = dlg.get_values()
+            self._click_a, self._click_b, self._count_in, self._click_volume_db = dlg.get_values()
         dlg.Destroy()
 
     def _on_watermark_settings(self, _event) -> None:
@@ -729,6 +745,8 @@ class MainFrame(wx.Frame):
                 fade_frames=config.fade_frames,
                 watermark=config.watermark,
                 fill_height=config.fill_height,
+                volume_db=config.volume_db,
+                click_volume_db=config.click_volume_db,
             )
             wx.CallAfter(self._pipeline_done, success=True, path=config.out_mp4)
         except Exception as exc:

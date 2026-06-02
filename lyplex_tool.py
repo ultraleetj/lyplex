@@ -1049,16 +1049,31 @@ def render_click_wav(
 # MP4 export
 # ---------------------------------------------------------------------------
 
+def _db_to_linear(db: float) -> float:
+    return 10.0 ** (db / 20.0)
+
+
 def _build_audio_cmd(
     click_wav_path: Path | None,
     delay_ms: float,
     audio_filters: str | None,
-    volume: float = 1.0,
+    volume_db: float = 0.0,
+    click_volume_db: float = 0.0,
 ) -> list[str]:
-    """Return ffmpeg audio-related args (extra -i inputs + filter flags)."""
+    """Return ffmpeg audio-related args (extra -i inputs + filter flags).
+
+    volume_db      — dB gain applied to the final mix (or music-only when no click).
+    click_volume_db — dB gain applied to the click stream before amix, allowing
+                      independent click loudness control relative to the music.
+    """
     args: list[str] = []
     delay_str = f"{delay_ms:.3f}"
-    vol_filter = f"volume={volume:.4f}" if abs(volume - 1.0) > 1e-4 else None
+
+    def _vf(db: float) -> str | None:
+        return f"volume={_db_to_linear(db):.6f}" if abs(db) > 0.01 else None
+
+    mix_vol   = _vf(volume_db)
+    click_vol = _vf(click_volume_db)
 
     if click_wav_path is not None:
         args += ["-i", str(click_wav_path)]
@@ -1071,21 +1086,27 @@ def _build_audio_cmd(
             ]
         else:
             segments = [f"[1:a]adelay={delay_str}|{delay_str}[music]"]
+        # apply per-stream click gain before amix
+        if click_vol:
+            segments.append(f"[2:a]{click_vol}[click]")
+            click_label = "[click]"
+        else:
+            click_label = "[2:a]"
         # normalize=0 requires ffmpeg 4.4+; omit for compatibility (amix will halve volumes)
         amix = "amix=inputs=2:duration=longest"
-        if vol_filter:
-            segments.append(f"[music][2:a]{amix}[mixed];[mixed]{vol_filter}")
+        if mix_vol:
+            segments.append(f"[music]{click_label}{amix}[mixed];[mixed]{mix_vol}")
         else:
-            segments.append(f"[music][2:a]{amix}")
+            segments.append(f"[music]{click_label}{amix}")
         args += ["-filter_complex", ";".join(segments)]
-    elif delay_ms > 0 or audio_filters or vol_filter:
+    elif delay_ms > 0 or audio_filters or mix_vol:
         parts: list[str] = []
         if audio_filters:
             parts.append(audio_filters)
         if delay_ms > 0:
             parts.append(f"adelay={delay_str}|{delay_str}")
-        if vol_filter:
-            parts.append(vol_filter)
+        if mix_vol:
+            parts.append(mix_vol)
         args += ["-filter_complex", f"[1:a]{','.join(parts)}"]
     return args
 
@@ -1128,7 +1149,8 @@ def encode_mp4(
     click_result: ClickResult | None = None,
     strip_crop_top: int = 0,
     fill_y_offset: int = 0,
-    volume: float = 1.5,
+    volume_db: float = 14.5,
+    click_volume_db: float = -3.0,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
     # y pixel offset: strip_crop_top removed from top of render; fill_y_offset added back
@@ -1155,7 +1177,8 @@ def encode_mp4(
         "-i", "pipe:0",
         "-i", str(wav_path),
     ]
-    ffmpeg_cmd += _build_audio_cmd(click_wav_path, delay_ms, audio_filters, volume=volume)
+    ffmpeg_cmd += _build_audio_cmd(click_wav_path, delay_ms, audio_filters,
+                                   volume_db=volume_db, click_volume_db=click_volume_db)
     ffmpeg_cmd += ["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
                    "-shortest", str(out_path)]
 
@@ -1310,7 +1333,8 @@ def generate_mp4(
     click_beat: ClickParams | None = None,
     count_in_bars: int = 0,  # 0-2
     fill_height: bool = False,
-    volume: float = 1.5,
+    volume_db: float = 14.5,
+    click_volume_db: float = -3.0,
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -1487,7 +1511,8 @@ def generate_mp4(
             watermark_overlay=wm_overlay,
             fade_frames=fade_frames,
             click_result=click_result,
-            volume=volume,
+            volume_db=volume_db,
+            click_volume_db=click_volume_db,
         )
 
         print(f"[lyplex] done: {out_path}")
