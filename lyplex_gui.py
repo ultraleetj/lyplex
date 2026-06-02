@@ -276,6 +276,8 @@ class MainFrame(wx.Frame):
         self._mp4_path: str | None = None
         self._html_path: str | None = None
         self._overwriting_log_line = False
+        self._last_line_start = 0
+        self._bpm_timer: wx.CallLater | None = None
         # Metronome / watermark dialog state (updated when dialogs are accepted)
         self._click_a = ClickParams(freq_hz=1500.0, waveform="sine", duration_ms=20.0, amplitude=0.6)
         self._click_b = ClickParams(freq_hz=1000.0, waveform="sine", duration_ms=20.0, amplitude=0.4)
@@ -310,14 +312,12 @@ class MainFrame(wx.Frame):
         # the TextCtrl in HWND z-order — MSAA scans backward for the
         # nearest preceding Static to use as the accessible name.
 
-        def file_row(label: str, wildcard: str,
-                     default: str = "", hint: str = "") -> wx.TextCtrl:
+        def _picker_row(label: str, make_dialog, default: str = "", hint: str = "") -> wx.TextCtrl:
             lbl = wx.StaticText(panel, label=label)   # FIRST — MSAA anchor
             tc  = wx.TextCtrl(panel, value=default)   # SECOND
             btn = wx.Button(panel, label="Browse…", size=(70, -1))
-            def on_browse(_e, _tc=tc, _wc=wildcard):
-                dlg = wx.FileDialog(self, wildcard=_wc,
-                                    style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+            def on_browse(_e, _tc=tc):
+                dlg = make_dialog()
                 if dlg.ShowModal() == wx.ID_OK:
                     _tc.SetValue(dlg.GetPath())
                 dlg.Destroy()
@@ -330,23 +330,13 @@ class MainFrame(wx.Frame):
             grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
             return tc
 
+        def file_row(label: str, wildcard: str, default: str = "", hint: str = "") -> wx.TextCtrl:
+            return _picker_row(label,
+                lambda wc=wildcard: wx.FileDialog(self, wildcard=wc, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST),
+                default, hint)
+
         def dir_row(label: str, default: str = "", hint: str = "") -> wx.TextCtrl:
-            lbl = wx.StaticText(panel, label=label)
-            tc  = wx.TextCtrl(panel, value=default)
-            btn = wx.Button(panel, label="Browse…", size=(70, -1))
-            def on_browse(_e, _tc=tc):
-                dlg = wx.DirDialog(self)
-                if dlg.ShowModal() == wx.ID_OK:
-                    _tc.SetValue(dlg.GetPath())
-                dlg.Destroy()
-            btn.Bind(wx.EVT_BUTTON, on_browse)
-            sz = wx.BoxSizer(wx.HORIZONTAL)
-            sz.Add(tc, 1, wx.EXPAND)
-            sz.Add(btn, 0, wx.LEFT, 4)
-            grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-            grid.Add(sz,  1, wx.EXPAND)
-            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
-            return tc
+            return _picker_row(label, lambda: wx.DirDialog(self), default, hint)
 
         def spin_double_row(label: str, min_v: float, max_v: float,
                             initial: float, inc: float, digits: int,
@@ -586,15 +576,12 @@ class MainFrame(wx.Frame):
         if self._overwriting_log_line:
             self._log.AppendText("\n")
         self._log.AppendText(text + "\n")
+        self._last_line_start = self._log.GetLastPosition()
         self._overwriting_log_line = False
 
     def _log_overwrite(self, text: str) -> None:
         if self._overwriting_log_line:
-            pos = self._log.GetLastPosition()
-            content = self._log.GetValue()
-            last_nl = content.rfind("\n")
-            start = last_nl + 1 if last_nl >= 0 else 0
-            self._log.Remove(start, pos)
+            self._log.Remove(self._last_line_start, self._log.GetLastPosition())
         self._log.AppendText(text)
         self._overwriting_log_line = True
 
@@ -603,13 +590,17 @@ class MainFrame(wx.Frame):
     # ------------------------------------------------------------------
 
     def _on_ly_changed(self, _event) -> None:
+        if self._bpm_timer is not None:
+            self._bpm_timer.Stop()
+        self._bpm_timer = wx.CallLater(400, self._update_bpm_from_ly)
+
+    def _update_bpm_from_ly(self) -> None:
         ly_path = self._ly_tc.GetValue().strip()
         if Path(ly_path).is_file():
             try:
-                source = Path(ly_path).read_text(encoding="utf-8")
-                bpm = _extract_source_bpm(source)
+                bpm = _extract_source_bpm(Path(ly_path).read_text(encoding="utf-8"))
                 if bpm is not None:
-                    self._tempo_tc.SetValue(bpm)
+                    self._tempo_tc.SetValue(f"{bpm:.0f}")
             except Exception:
                 pass
 
@@ -759,12 +750,12 @@ class MainFrame(wx.Frame):
     def _pipeline_done(self, success: bool, path: str) -> None:
         self._btn_mp4.Enable()
         if success:
-            self._log_newline(f"\nDone: {path}")
+            msg, status = f"\nDone: {path}", f"Done: {Path(path).name}"
             self._btn_explorer.Enable()
-            self.SetStatusText(f"Done: {Path(path).name}")
         else:
-            self._log_newline("\nEncoding failed. See log above.")
-            self.SetStatusText("Encoding failed.")
+            msg, status = "\nEncoding failed. See log above.", "Encoding failed."
+        self._log_newline(msg)
+        self.SetStatusText(status)
 
     # ------------------------------------------------------------------
     # Post-completion
