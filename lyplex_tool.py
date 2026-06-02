@@ -213,21 +213,15 @@ def _inject_all_bar_numbers(source: str) -> str:
 """
     return source + snippet
 
-def _strip_paper_blocks(source: str) -> str:
-    """Remove all top-level \\paper { ... } blocks from source."""
+def _add_strip_paper(source: str) -> str:
+    """Remove existing \\paper blocks then append single-strip paper block."""
     result = []
     pos = 0
     for m in re.finditer(r'\\paper\s*\{', source):
         result.append(source[pos:m.start()])
         pos = _find_closing_brace(source, m.end() - 1)
     result.append(source[pos:])
-    return ''.join(result)
-
-
-def _add_strip_paper(source: str) -> str:
-    """Strip any existing \\paper blocks then append single-strip paper block."""
-    source = _strip_paper_blocks(source)
-    paper = r"""
+    result.append(r"""
 \paper {
   system-count = 1
   paper-width = 9999\mm
@@ -237,8 +231,8 @@ def _add_strip_paper(source: str) -> str:
   bottom-margin = 5\mm
   indent = 0
 }
-"""
-    return source + paper
+""")
+    return ''.join(result)
 
 def patch_ly_svg(source: str, bar_numbers: bool = True) -> str:
     s = _strip_book_output_name(source)
@@ -255,8 +249,8 @@ def patch_ly_svg(source: str, bar_numbers: bool = True) -> str:
 def patch_ly_timing_midi(source: str) -> str:
     s = _strip_book_output_name(source)
     s = _strip_ties(s)
-    s = _strip_unfold_repeats(s)
     if _should_unfold_repeats(source):
+        s = _strip_unfold_repeats(s)
         s = _inject_unfold_repeats(s)
     s = _add_strip_paper(s)
     return s
@@ -477,25 +471,19 @@ def compile_svg(source: str, workdir: str, lilypond_exe: str | None = None, bar_
         f"LilyPond did not produce SVG.\nWorkdir contents:\n  {listing}"
     )
 
+def _compile_midi(source: str, basename: str, patch_fn, workdir: str, lilypond_exe: str | None = None) -> Path:
+    _compile_lilypond(patch_fn(source), basename, workdir, lilypond_exe)
+    for ext in (".midi", ".mid"):
+        p = Path(workdir) / f"{basename}{ext}"
+        if p.exists():
+            return p
+    raise RuntimeError(f"LilyPond did not produce {basename} MIDI.")
+
 def compile_timing_midi(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
-    patched = patch_ly_timing_midi(source)
-    _compile_lilypond(patched, "score-timing", workdir, lilypond_exe)
-    midi_path = Path(workdir) / "score-timing.midi"
-    if not midi_path.exists():
-        midi_path = Path(workdir) / "score-timing.mid"
-    if not midi_path.exists():
-        raise RuntimeError("LilyPond did not produce timing MIDI.")
-    return midi_path
+    return _compile_midi(source, "score-timing", patch_ly_timing_midi, workdir, lilypond_exe)
 
 def compile_audio_midi(source: str, workdir: str, lilypond_exe: str | None = None) -> Path:
-    patched = patch_ly_audio_midi(source)
-    _compile_lilypond(patched, "score-audio", workdir, lilypond_exe)
-    midi_path = Path(workdir) / "score-audio.midi"
-    if not midi_path.exists():
-        midi_path = Path(workdir) / "score-audio.mid"
-    if not midi_path.exists():
-        raise RuntimeError("LilyPond did not produce audio MIDI.")
-    return midi_path
+    return _compile_midi(source, "score-audio", patch_ly_audio_midi, workdir, lilypond_exe)
 
 # ---------------------------------------------------------------------------
 # SVG parsing — anchor extraction
@@ -526,7 +514,9 @@ def _first_child_translate(element) -> tuple[float, float]:
 
 def _extract_anchors_from_root(root) -> list[AnchorInfo]:
     anchors: list[AnchorInfo] = []
-    a_elements = list(root.iter(f"{{{SVG_NS}}}a")) or list(root.iter("a"))
+    a_elements = list(root.iter(f"{{{SVG_NS}}}a"))
+    if not a_elements:
+        a_elements = list(root.iter("a"))
     print(f"[lyplex] SVG <a> elements found: {len(a_elements)}")
     for a in a_elements:
         href = (a.get(f"{{{XLINK}}}href", "")
@@ -735,15 +725,10 @@ def extract_timing_midi(midi_path: Path) -> tuple[list[tuple[int, int]], list[tu
 
 
 def _group_by_value(items, key_fn) -> list[list]:
-    groups: list[list] = []
-    seen: dict = {}
+    groups: dict = {}
     for item in items:
-        k = key_fn(item)
-        if k not in seen:
-            seen[k] = len(groups)
-            groups.append([])
-        groups[seen[k]].append(item)
-    return groups
+        groups.setdefault(key_fn(item), []).append(item)
+    return list(groups.values())
 
 def _merge_closest_svg_groups(svg_groups: list[list], target: int) -> list[list]:
     """Merge consecutive SVG groups with the smallest x-gap until count == target.
@@ -867,21 +852,8 @@ def scroll_offset_at(
 ) -> float:
     if not timing_map:
         return 0.0
-    if ms <= timing_map[0].ms:
-        return 0.0
-    if ms >= timing_map[-1].ms:
-        score_x = timing_map[-1].x
-        return max(0.0, score_x - viewport_width * CURSOR_POSITION)
-
     keys = ms_keys if ms_keys is not None else [e.ms for e in timing_map]
-    i = bisect_left(keys, ms) - 1
-    i = max(0, min(i, len(timing_map) - 2))
-
-    t0, x0 = timing_map[i].ms, timing_map[i].x
-    t1, x1 = timing_map[i + 1].ms, timing_map[i + 1].x
-
-    progress = (ms - t0) / (t1 - t0) if t1 != t0 else 0.0
-    score_x = x0 + (x1 - x0) * progress
+    score_x, _ = _interp_timing_map(ms, timing_map, keys)
     return max(0.0, score_x - viewport_width * CURSOR_POSITION)
 
 # ---------------------------------------------------------------------------
@@ -1206,14 +1178,10 @@ def encode_mp4(
     needs_overlay = trail or bool(_hl_map)
 
     # Pre-composite fixed overlays into one image (done once outside frame loop)
-    fixed_overlay: Image.Image | None = None
-    if title_footer_overlay is not None or watermark_overlay is not None:
-        _combined = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        if title_footer_overlay is not None:
-            _combined = Image.alpha_composite(_combined, title_footer_overlay)
-        if watermark_overlay is not None:
-            _combined = Image.alpha_composite(_combined, watermark_overlay)
-        fixed_overlay = _combined
+    if title_footer_overlay is not None and watermark_overlay is not None:
+        fixed_overlay: Image.Image | None = Image.alpha_composite(title_footer_overlay, watermark_overlay)
+    else:
+        fixed_overlay = title_footer_overlay or watermark_overlay
 
     try:
         for frame_n in range(n_frames):
@@ -1358,8 +1326,6 @@ def generate_mp4(
     else:
         tempo_multiplier = 1.0
 
-    needs_audio_midi = True  # timing MIDI strips ties; audio always uses separate patch
-
     workdir = tempfile.mkdtemp(prefix="lyplex_")
     try:
         print(f"[lyplex] workdir: {workdir}")
@@ -1373,19 +1339,18 @@ def generate_mp4(
         print("[lyplex] compiling timing MIDI...")
         timing_midi_path = compile_timing_midi(source, workdir, lilypond_exe)
 
-        if needs_audio_midi:
-            print("[lyplex] compiling audio MIDI (unfolding repeats)...")
-            audio_midi_path = compile_audio_midi(source, workdir, lilypond_exe)
-        else:
-            audio_midi_path = timing_midi_path
+        print("[lyplex] compiling audio MIDI...")
+        audio_midi_path = compile_audio_midi(source, workdir, lilypond_exe)
 
         # Parse all SVG pages; extract anchors with cumulative x-offsets across pages.
         svg_roots = [etree.parse(str(p)).getroot() for p in svg_paths]
         print("[lyplex] extracting SVG anchors...")
-        anchors = []
+        anchors: list[AnchorInfo] = []
+        last_page_anchors: list[AnchorInfo] = []
         x_offset_svgu = 0.0
         for root in svg_roots:
-            for a in _extract_anchors_from_root(root):
+            last_page_anchors = _extract_anchors_from_root(root)
+            for a in last_page_anchors:
                 anchors.append(dc_replace(a, x=a.x + x_offset_svgu))
             vb = root.get("viewBox", "0 0 0 0").split()
             x_offset_svgu += float(vb[2]) if len(vb) >= 3 else 0.0
@@ -1412,9 +1377,8 @@ def generate_mp4(
             timing_map = [dc_replace(e, ms=e.ms / tempo_multiplier) for e in timing_map]
 
         # Crop last page to content width (removes trailing paper-width whitespace).
-        last_anchors_local = _extract_anchors_from_root(svg_roots[-1])
-        if last_anchors_local:
-            max_x_last = max(a.x for a in last_anchors_local)
+        if last_page_anchors:
+            max_x_last = max(a.x for a in last_page_anchors)
             svg_paths[-1], svg_roots[-1] = _crop_svg_to_content(svg_paths[-1], svg_roots[-1], max_x_last)
 
         # Scale — px_per_svgu is constant across pages (same LilyPond compile).
