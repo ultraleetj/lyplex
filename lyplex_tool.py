@@ -604,6 +604,29 @@ def _crop_svg_to_content(
 # MIDI parsing
 # ---------------------------------------------------------------------------
 
+def _midi_last_note_off_ms(midi_path: Path) -> float:
+    """Return the last note-off time (ms) from a MIDI file using its own tempo map."""
+    midi_file = mido.MidiFile(str(midi_path))
+    tempo_map = _build_tempo_map(midi_file)
+    ticks_per_beat = midi_file.ticks_per_beat
+    last_off_tick = 0
+    for track in midi_file.tracks:
+        abs_tick = 0
+        active: dict[int, int] = {}
+        for msg in track:
+            abs_tick += msg.time
+            if msg.type == "note_on" and msg.velocity > 0:
+                active[msg.note] = abs_tick
+            elif msg.type in ("note_off", "note_on") and msg.velocity == 0:
+                if msg.note in active:
+                    last_off_tick = max(last_off_tick, abs_tick)
+                    active.pop(msg.note)
+        # notes with no note_off — use track end as off tick
+        for _ in active:
+            last_off_tick = max(last_off_tick, abs_tick)
+    return _tick_to_ms(last_off_tick, tempo_map, ticks_per_beat)
+
+
 def _build_tempo_map(midi_file: mido.MidiFile) -> list[tuple[int, float, int]]:
     """Returns [(tick, ms, tempo_us), ...] checkpoints; tempo_us active from that tick onward."""
     tempo = 500000
@@ -1413,14 +1436,13 @@ def generate_mp4(
         if metronome:
             click_wav = Path(workdir) / "click.wav"
             print("[lyplex] synthesizing metronome click track...")
-            # Use the rendered audio WAV duration as total_ms so the click track
-            # covers the full piece even when unfolded repeats make the audio MIDI
-            # longer than the timing MIDI (which drives note_timing_map).
-            with wave.open(str(wav_path), 'r') as _wf:
-                _audio_total_ms = _wf.getnframes() / _wf.getframerate() * 1000.0
+            # Use last note-off time from audio MIDI (not WAV duration) so the
+            # click track covers the full piece including unfolded repeats, without
+            # extending into fluidsynth's reverb tail which adds extra click beats.
+            _click_total_ms = _midi_last_note_off_ms(audio_midi_path)
             click_result = render_click_wav(
                 tempo_map, ticks_per_beat, time_sig,
-                total_ms=_audio_total_ms,
+                total_ms=_click_total_ms,
                 out_path=click_wav,
                 tempo_multiplier=tempo_multiplier,
                 accent_params=click_accent,
