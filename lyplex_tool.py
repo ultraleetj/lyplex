@@ -941,7 +941,7 @@ def _make_click_burst(p: ClickParams) -> list[float]:
     return burst
 
 
-_CLICK_PRE_ROLL_MS = 500.0  # silence before first count-in click; prevents t=0 clip
+_CLICK_PRE_ROLL_MS = 10.0  # silence before first count-in click; prevents t=0 clip
 
 
 def render_click_wav(
@@ -1028,11 +1028,12 @@ def render_click_wav(
 
 def _build_audio_cmd(
     click_wav_path: Path | None,
-    delay_ms: int,
+    delay_ms: float,
     audio_filters: str | None,
 ) -> list[str]:
     """Return ffmpeg audio-related args (extra -i inputs + filter flags)."""
     args: list[str] = []
+    delay_str = f"{delay_ms:.3f}"
     if click_wav_path is not None:
         args += ["-i", str(click_wav_path)]
         # atempo before adelay: adelay operates in output-domain ms after speed change,
@@ -1040,18 +1041,18 @@ def _build_audio_cmd(
         if audio_filters:
             segments = [
                 f"[1:a]{audio_filters}[musicf]",
-                f"[musicf]adelay={delay_ms}|{delay_ms}[music]",
+                f"[musicf]adelay={delay_str}|{delay_str}[music]",
             ]
         else:
-            segments = [f"[1:a]adelay={delay_ms}|{delay_ms}[music]"]
+            segments = [f"[1:a]adelay={delay_str}|{delay_str}[music]"]
         # normalize=0 requires ffmpeg 4.4+; omit for compatibility (amix will halve volumes)
         segments.append(f"[music][2:a]amix=inputs=2:duration=longest")
         args += ["-filter_complex", ";".join(segments)]
     elif delay_ms > 0:
         if audio_filters:
-            chain = f"[1:a]{audio_filters},adelay={delay_ms}|{delay_ms}"
+            chain = f"[1:a]{audio_filters},adelay={delay_str}|{delay_str}"
         else:
-            chain = f"[1:a]adelay={delay_ms}|{delay_ms}"
+            chain = f"[1:a]adelay={delay_str}|{delay_str}"
         args += ["-filter_complex", chain]
     elif audio_filters:
         args += ["-filter:a", audio_filters]
@@ -1113,7 +1114,7 @@ def encode_mp4(
     audio_filters = _atempo_filter(atempo) if abs(atempo - 1.0) > 1e-6 else None
 
     # Music WAV delayed by count_in_ms; click WAV already starts at t=0
-    delay_ms = int(count_in_ms)
+    delay_ms = count_in_ms
     ffmpeg_cmd = [
         ffmpeg, "-y",
         "-framerate", str(fps),
