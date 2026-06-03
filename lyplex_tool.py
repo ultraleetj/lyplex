@@ -4,6 +4,8 @@ lyplex_tool.py — core pipeline: LilyPond → SVG/MIDI → timing map → MP4
 
 from __future__ import annotations
 
+__version__ = "1.0.0"
+
 import array
 import io
 import math
@@ -117,6 +119,36 @@ def _require_soundfont(sf2_path: str) -> None:
             f"Soundfont not found: {sf2_path!r}. "
             "A valid .sf2 file is required for audio rendering."
         )
+
+def _check_binaries(
+    lilypond_exe: str | None,
+    ffmpeg_exe: str | None,
+    fluidsynth_exe: str | None,
+) -> None:
+    """Verify all three required external binaries are available before the
+    pipeline allocates any resources.  Raises FileNotFoundError with a clear
+    message (including a download URL) for the first missing binary found."""
+    _BINARIES = [
+        ("lilypond", lilypond_exe, "https://lilypond.org/download.html",
+         "--lilypond flag"),
+        ("ffmpeg",   ffmpeg_exe,   "https://ffmpeg.org/download.html",
+         "--ffmpeg flag"),
+        ("fluidsynth", fluidsynth_exe, "https://www.fluidsynth.org/",
+         "--fluidsynth flag"),
+    ]
+    for name, exe, url, flag in _BINARIES:
+        if exe:                          # explicit path provided
+            if not Path(exe).is_file():
+                raise FileNotFoundError(
+                    f"{name.capitalize()} not found at the configured path: {exe!r}. "
+                    f"Install from {url} or correct the path in GUI/{flag}."
+                )
+        else:                            # fall back to PATH lookup
+            if shutil.which(name) is None:
+                raise FileNotFoundError(
+                    f"{name.capitalize()} not found on PATH. "
+                    f"Install from {url} or set the path in GUI/{flag}."
+                )
 
 # ---------------------------------------------------------------------------
 # .ly patching
@@ -1327,9 +1359,7 @@ def generate_mp4(
     cancel_event: threading.Event | None = None,
 ) -> None:
     # Preflight
-    _require_binary("lilypond", lilypond_exe)
-    _require_binary("ffmpeg", ffmpeg_exe)
-    _require_binary("fluidsynth", fluidsynth_exe)
+    _check_binaries(lilypond_exe, ffmpeg_exe, fluidsynth_exe)
     _require_soundfont(sf2_path)
 
     source = Path(ly_path).read_text(encoding="utf-8")
@@ -1509,11 +1539,7 @@ def generate_mp4(
         print(f"[lyplex] done: {out_path}")
 
     finally:
-        exc_type = sys.exc_info()[0]
-        if exc_type is None or exc_type is InterruptedError:
-            shutil.rmtree(workdir, ignore_errors=True)
-        else:
-            print(f"[lyplex] workdir preserved for inspection (error): {workdir}")
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1534,6 +1560,7 @@ if __name__ == "__main__":
             return default
 
     parser = argparse.ArgumentParser(description="LyPlex: LilyPond → scrolling MP4")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("ly_file", help=".ly input file")
     parser.add_argument("sf2_file", help=".sf2 soundfont")
     parser.add_argument("output", nargs="?", default=None,
