@@ -18,7 +18,7 @@ In short: you give it a `.ly` file, it gives you an MP4.
 
 ## Requirements
 
-**For the portable GUI exe:** just extract the zip and run. No Python, no pip, no drama.
+**For the portable GUI exe:** install LilyPond first, then just extract the zip and run. No Python, no pip, no drama.
 
 **For the CLI or running from source** (`pip install -r requirements.txt`):
 ```
@@ -98,7 +98,7 @@ En pocas palabras: le das un archivo `.ly`, te devuelve un MP4.
 
 ## Requisitos
 
-**Para el exe portable:** solo extrae el zip y ejecuta. Sin Python, sin pip, sin dramas.
+**Para el exe portable:** instala LilyPond primero, luego extrae el zip y ejecuta. Sin Python, sin pip, sin dramas.
 
 **Para la línea de comandos o ejecutar desde el código fuente** (`pip install -r requirements.txt`):
 ```
