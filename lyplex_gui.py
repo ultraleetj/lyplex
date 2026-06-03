@@ -9,38 +9,59 @@ import os
 import subprocess
 import sys
 import threading
-import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
 import wx
 
 from lyplex_tool import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ClickParams, WatermarkParams, generate_mp4, _extract_source_bpm
+from lyplex_strings import STRINGS
+from lyplex_help import HELP
 
 HERE = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
 
-def _default(rel: str) -> str:
-    """Return absolute path for a bundled file if it exists, else empty string."""
-    p = HERE / rel
-    return str(p) if p.exists() else ""
+# ---------------------------------------------------------------------------
+# i18n helpers
+# ---------------------------------------------------------------------------
 
-COLOR_PRESETS: list[tuple[str, tuple[int, int, int]]] = [
-    ("Red",    (220,  50,  50)),
-    ("Blue",   ( 50, 120, 220)),
-    ("Green",  ( 50, 180,  80)),
-    ("Yellow", (240, 200,  30)),
-    ("Cyan",   ( 40, 200, 220)),
-    ("Orange", (240, 130,  40)),
-    ("White",  (255, 255, 255)),
-    ("Black",  (  0,   0,   0)),
-    ("Purple", (160,  60, 200)),
-    ("Pink",   (240, 100, 160)),
+_lang: str = "en"
+
+def S(key: str, **kwargs) -> str:
+    """Return the string for key in the current language, with optional format args."""
+    s = STRINGS[_lang].get(key) or STRINGS["en"].get(key, key)
+    return s.format(**kwargs) if kwargs else s
+
+# ---------------------------------------------------------------------------
+# Color presets — keys reference STRINGS for translated names
+# ---------------------------------------------------------------------------
+
+_COLOR_PRESET_DATA: list[tuple[str, tuple[int, int, int]]] = [
+    ("color_red",    (220,  50,  50)),
+    ("color_blue",   ( 50, 120, 220)),
+    ("color_green",  ( 50, 180,  80)),
+    ("color_yellow", (240, 200,  30)),
+    ("color_cyan",   ( 40, 200, 220)),
+    ("color_orange", (240, 130,  40)),
+    ("color_white",  (255, 255, 255)),
+    ("color_black",  (  0,   0,   0)),
+    ("color_purple", (160,  60, 200)),
+    ("color_pink",   (240, 100, 160)),
 ]
-_PRESET_NAMES = [name for name, _ in COLOR_PRESETS]
+
+def _color_names() -> list[str]:
+    return [S(key) for key, _ in _COLOR_PRESET_DATA]
 
 def _parse_color(choice: wx.Choice, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
     i = choice.GetSelection()
-    return COLOR_PRESETS[i][1] if 0 <= i < len(COLOR_PRESETS) else fallback
+    return _COLOR_PRESET_DATA[i][1] if 0 <= i < len(_COLOR_PRESET_DATA) else fallback
+
+def _default_color_idx(rgb: tuple[int, int, int]) -> int:
+    return next((i for i, (_, r) in enumerate(_COLOR_PRESET_DATA) if r == rgb), 0)
+
+
+def _default(rel: str) -> str:
+    p = HERE / rel
+    return str(p) if p.exists() else ""
 
 
 def _spin_double(parent: wx.Window, lo: float, hi: float, val: float, inc: float, name: str) -> wx.SpinCtrlDouble:
@@ -48,6 +69,10 @@ def _spin_double(parent: wx.Window, lo: float, hi: float, val: float, inc: float
     c.SetDigits(2)
     return c
 
+
+# ---------------------------------------------------------------------------
+# PipelineConfig
+# ---------------------------------------------------------------------------
 
 @dataclass
 class PipelineConfig:
@@ -83,7 +108,45 @@ class PipelineConfig:
 
 
 # ---------------------------------------------------------------------------
-# Metronome settings dialog
+# HelpDialog
+# ---------------------------------------------------------------------------
+
+class HelpDialog(wx.Dialog):
+    def __init__(self, parent):
+        data = HELP[_lang]
+        super().__init__(parent, title=data["title"],
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+                         size=(620, 520))
+        panel = wx.Panel(self)
+
+        tc = wx.TextCtrl(
+            panel,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_WORDWRAP,
+        )
+        tc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+
+        text_parts: list[str] = []
+        for section in data["sections"]:
+            heading = section["heading"]
+            text_parts.append(heading)
+            text_parts.append("─" * 48)
+            text_parts.append(section["body"])
+            text_parts.append("")
+        tc.SetValue("\n".join(text_parts))
+
+        close_btn = wx.Button(panel, wx.ID_CLOSE)
+        close_btn.Bind(wx.EVT_BUTTON, lambda _e: self.EndModal(wx.ID_CLOSE))
+        self.Bind(wx.EVT_CHAR_HOOK, lambda e: self.EndModal(wx.ID_CLOSE) if e.GetKeyCode() == wx.WXK_ESCAPE else e.Skip())
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(tc, 1, wx.EXPAND | wx.ALL, 10)
+        sizer.Add(close_btn, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, 10)
+        panel.SetSizer(sizer)
+        self.Centre()
+
+
+# ---------------------------------------------------------------------------
+# MetronomeDialog
 # ---------------------------------------------------------------------------
 
 class MetronomeDialog(wx.Dialog):
@@ -91,23 +154,23 @@ class MetronomeDialog(wx.Dialog):
 
     def __init__(self, parent, click_a: ClickParams, click_b: ClickParams, count_in: int,
                  click_volume_db: float = -3.0):
-        super().__init__(parent, title="Metronome Settings",
+        super().__init__(parent, title=S("metro_dialog_title"),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         panel = wx.Panel(self)
         grid = wx.FlexGridSizer(cols=3, hgap=8, vgap=6)
         grid.AddGrowableCol(1, 1)
 
-        def _section(title: str) -> None:
-            st = wx.StaticText(panel, label=title)
+        def _section(key: str) -> None:
+            st = wx.StaticText(panel, label=S(key))
             st.SetFont(st.GetFont().Bold())
             grid.Add(st, 0, wx.TOP | wx.ALIGN_CENTER_VERTICAL, 6)
             grid.AddSpacer(0)
             grid.AddSpacer(0)
 
-        def _row(label: str, ctrl, hint: str = "") -> None:
-            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+        def _row(label_key: str, ctrl, hint_key: str = "") -> None:
+            grid.Add(wx.StaticText(panel, label=S(label_key)), 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(ctrl, 0, wx.EXPAND)
-            grid.Add(wx.StaticText(panel, label=hint) if hint else (0, 0),
+            grid.Add(wx.StaticText(panel, label=S(hint_key)) if hint_key else (0, 0),
                      0, wx.ALIGN_CENTER_VERTICAL)
 
         def _wf_idx(p: ClickParams) -> int:
@@ -116,35 +179,35 @@ class MetronomeDialog(wx.Dialog):
             except ValueError:
                 return 0
 
-        _section("Accent click  (beat 1)")
-        self._a_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_a.freq_hz), name="Accent frequency")
-        _row("Frequency:", self._a_freq, "Hz")
-        self._a_wave = wx.Choice(panel, choices=self._WAVEFORMS, name="Accent waveform")
+        _section("metro_section_accent")
+        self._a_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_a.freq_hz))
+        _row("metro_label_frequency", self._a_freq, "metro_hint_frequency")
+        self._a_wave = wx.Choice(panel, choices=self._WAVEFORMS)
         self._a_wave.SetSelection(_wf_idx(click_a))
-        _row("Waveform:", self._a_wave)
-        self._a_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_a.duration_ms), name="Accent duration")
-        _row("Duration:", self._a_dur, "ms")
-        self._a_amp = _spin_double(panel, 0.05, 1.0, click_a.amplitude, 0.05, "Accent amplitude")
-        _row("Amplitude:", self._a_amp, "0.05 – 1.0")
+        _row("metro_label_waveform", self._a_wave)
+        self._a_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_a.duration_ms))
+        _row("metro_label_duration", self._a_dur, "metro_hint_duration")
+        self._a_amp = _spin_double(panel, 0.05, 1.0, click_a.amplitude, 0.05, "")
+        _row("metro_label_amplitude", self._a_amp, "metro_hint_amplitude")
 
-        _section("Beat click  (beats 2, 3, …)")
-        self._b_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_b.freq_hz), name="Beat frequency")
-        _row("Frequency:", self._b_freq, "Hz")
-        self._b_wave = wx.Choice(panel, choices=self._WAVEFORMS, name="Beat waveform")
+        _section("metro_section_beat")
+        self._b_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_b.freq_hz))
+        _row("metro_label_frequency", self._b_freq, "metro_hint_frequency")
+        self._b_wave = wx.Choice(panel, choices=self._WAVEFORMS)
         self._b_wave.SetSelection(_wf_idx(click_b))
-        _row("Waveform:", self._b_wave)
-        self._b_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_b.duration_ms), name="Beat duration")
-        _row("Duration:", self._b_dur, "ms")
-        self._b_amp = _spin_double(panel, 0.05, 1.0, click_b.amplitude, 0.05, "Beat amplitude")
-        _row("Amplitude:", self._b_amp, "0.05 – 1.0")
+        _row("metro_label_waveform", self._b_wave)
+        self._b_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_b.duration_ms))
+        _row("metro_label_duration", self._b_dur, "metro_hint_duration")
+        self._b_amp = _spin_double(panel, 0.05, 1.0, click_b.amplitude, 0.05, "")
+        _row("metro_label_amplitude", self._b_amp, "metro_hint_amplitude")
 
-        _section("Count-in")
-        self._count_in_spin = wx.SpinCtrl(panel, min=0, max=4, initial=count_in, name="Count-in bars")
-        _row("Bars:", self._count_in_spin, "0 = no count-in")
+        _section("metro_section_count_in")
+        self._count_in_spin = wx.SpinCtrl(panel, min=0, max=4, initial=count_in)
+        _row("metro_label_bars", self._count_in_spin, "metro_hint_count_in_bars")
 
-        _section("Mix level")
-        self._click_vol = _spin_double(panel, -24.0, 12.0, click_volume_db, 0.5, "Click volume dB")
-        _row("Click volume:", self._click_vol, "dB  (relative to music)")
+        _section("metro_section_mix")
+        self._click_vol = _spin_double(panel, -24.0, 12.0, click_volume_db, 0.5, "")
+        _row("metro_label_click_volume", self._click_vol, "metro_hint_click_volume")
 
         btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         root = wx.BoxSizer(wx.VERTICAL)
@@ -171,30 +234,25 @@ class MetronomeDialog(wx.Dialog):
 
 
 # ---------------------------------------------------------------------------
-# Watermark settings dialog
+# WatermarkDialog
 # ---------------------------------------------------------------------------
 
 class WatermarkDialog(wx.Dialog):
     _POSITIONS = ["BR", "BL", "TR", "TL"]
 
     def __init__(self, parent, params: WatermarkParams):
-        super().__init__(parent, title="Watermark Settings",
+        super().__init__(parent, title=S("wm_dialog_title"),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         panel = wx.Panel(self)
         grid = wx.FlexGridSizer(cols=3, hgap=8, vgap=8)
         grid.AddGrowableCol(1, 1)
 
-        # Logo file picker
-        grid.Add(wx.StaticText(panel, label="Logo file:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._path_tc = wx.TextCtrl(panel, value=params.path, name="Watermark logo file")
-        btn_browse = wx.Button(panel, label="Browse…", size=(70, -1))
+        grid.Add(wx.StaticText(panel, label=S("wm_label_logo")), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._path_tc = wx.TextCtrl(panel, value=params.path)
+        btn_browse = wx.Button(panel, label=S("btn_browse"), size=(80, -1))
         def _on_browse(_e):
-            dlg = wx.FileDialog(
-                self,
-                wildcard="Images (*.svg;*.png;*.jpg;*.jpeg)|*.svg;*.png;*.jpg;*.jpeg"
-                         "|All files (*.*)|*.*",
-                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
-            )
+            dlg = wx.FileDialog(self, wildcard=S("wildcard_images"),
+                                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
             if dlg.ShowModal() == wx.ID_OK:
                 self._path_tc.SetValue(dlg.GetPath())
             dlg.Destroy()
@@ -203,22 +261,19 @@ class WatermarkDialog(wx.Dialog):
         sz_path.Add(self._path_tc, 1, wx.EXPAND)
         sz_path.Add(btn_browse, 0, wx.LEFT, 4)
         grid.Add(sz_path, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(panel, label="(blank = no watermark)"),
-                 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(wx.StaticText(panel, label=S("wm_hint_logo")), 0, wx.ALIGN_CENTER_VERTICAL)
 
-        # Position
         pos_idx = next((i for i, p in enumerate(self._POSITIONS) if p == params.position), 0)
-        grid.Add(wx.StaticText(panel, label="Position:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._pos_ch = wx.Choice(panel, choices=self._POSITIONS, name="Watermark position")
+        grid.Add(wx.StaticText(panel, label=S("wm_label_position")), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._pos_ch = wx.Choice(panel, choices=self._POSITIONS)
         self._pos_ch.SetSelection(pos_idx)
         grid.Add(self._pos_ch, 0)
-        grid.Add(wx.StaticText(panel, label="corner of video"), 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(wx.StaticText(panel, label=S("wm_hint_position")), 0, wx.ALIGN_CENTER_VERTICAL)
 
-        # Opacity
-        grid.Add(wx.StaticText(panel, label="Opacity:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._opacity_ctrl = _spin_double(panel, 0.05, 1.0, params.opacity, 0.05, "Watermark opacity")
+        grid.Add(wx.StaticText(panel, label=S("wm_label_opacity")), 0, wx.ALIGN_CENTER_VERTICAL)
+        self._opacity_ctrl = _spin_double(panel, 0.05, 1.0, params.opacity, 0.05, "")
         grid.Add(self._opacity_ctrl, 0)
-        grid.Add(wx.StaticText(panel, label="0.05 – 1.0"), 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(wx.StaticText(panel, label=S("wm_hint_opacity")), 0, wx.ALIGN_CENTER_VERTICAL)
 
         btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         root = wx.BoxSizer(wx.VERTICAL)
@@ -237,12 +292,10 @@ class WatermarkDialog(wx.Dialog):
 
 
 # ---------------------------------------------------------------------------
-# Log stream — redirects print() to the log widget, handles \r progress lines
+# Log stream
 # ---------------------------------------------------------------------------
 
 class _LogStream:
-    """Redirect write() to wx callbacks, handling \\r carriage-return progress lines."""
-
     def __init__(self, on_newline, on_overwrite):
         self._on_newline = on_newline
         self._on_overwrite = on_overwrite
@@ -273,28 +326,28 @@ class _LogStream:
 class MainFrame(wx.Frame):
 
     def __init__(self):
-        super().__init__(None, title="LyPlex — Scrolling Sheet Music", size=(740, 940))
+        super().__init__(None, title=S("window_title"), size=(760, 960))
         self._mp4_path: str | None = None
         self._overwriting_log_line = False
         self._last_line_start = 0
         self._bpm_timer: wx.CallLater | None = None
         self._cancel_event: threading.Event | None = None
-        # Metronome / watermark dialog state (updated when dialogs are accepted)
         self._click_a = ClickParams(freq_hz=1500.0, waveform="sine", duration_ms=20.0, amplitude=0.6)
         self._click_b = ClickParams(freq_hz=1000.0, waveform="sine", duration_ms=20.0, amplitude=0.4)
         self._count_in = 0
         self._click_volume_db = -3.0
         self._watermark = WatermarkParams()
+        # i18n tracking: list of (widget, string_key) for SetLabel on language change
+        self._i18n: list[tuple[wx.Window, str]] = []
+        self._color_choices: list[wx.Choice] = []
         self._build_ui()
         self.CreateStatusBar()
-        self.SetStatusText("Ready.")
+        self.SetStatusText(S("status_ready"))
         self.Centre()
         self.Show()
 
     # ------------------------------------------------------------------
     # UI construction
-    # Labels created before controls so MSAA finds the preceding Static
-    # as the accessible name for each native HWND control.
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
@@ -304,10 +357,19 @@ class MainFrame(wx.Frame):
         grid = wx.FlexGridSizer(cols=3, hgap=6, vgap=8)
         grid.AddGrowableCol(1, 1)
 
-        def _picker_row(label: str, make_dialog, default: str = "", hint: str = "") -> wx.TextCtrl:
-            lbl = wx.StaticText(panel, label=label)
+        # ---- i18n tracking helper ----
+        def _t(w: wx.Window, key: str) -> wx.Window:
+            self._i18n.append((w, key))
+            return w
+
+        # ---- row builder helpers ----
+
+        def _picker_row(label_key: str, make_dialog, default: str = "",
+                        hint_key: str = "") -> wx.TextCtrl:
+            grid.Add(_t(wx.StaticText(panel, label=S(label_key)), label_key),
+                     0, wx.ALIGN_CENTER_VERTICAL)
             tc  = wx.TextCtrl(panel, value=default)
-            btn = wx.Button(panel, label="Browse…", size=(70, -1))
+            btn = _t(wx.Button(panel, label=S("btn_browse"), size=(80, -1)), "btn_browse")
             def on_browse(_e, _tc=tc):
                 dlg = make_dialog()
                 if dlg.ShowModal() == wx.ID_OK:
@@ -317,25 +379,32 @@ class MainFrame(wx.Frame):
             sz = wx.BoxSizer(wx.HORIZONTAL)
             sz.Add(tc, 1, wx.EXPAND)
             sz.Add(btn, 0, wx.LEFT, 4)
-            grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-            grid.Add(sz,  1, wx.EXPAND)
-            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
+            grid.Add(sz, 1, wx.EXPAND)
+            if hint_key:
+                grid.Add(_t(wx.StaticText(panel, label=S(hint_key)), hint_key),
+                         0, wx.ALIGN_CENTER_VERTICAL)
+            else:
+                grid.AddSpacer(0)
             return tc
 
-        def file_row(label: str, wildcard: str, default: str = "", hint: str = "") -> wx.TextCtrl:
-            return _picker_row(label,
-                lambda wc=wildcard: wx.FileDialog(self, wildcard=wc, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST),
-                default, hint)
+        def file_row(label_key: str, wildcard_key: str, default: str = "",
+                     hint_key: str = "") -> wx.TextCtrl:
+            return _picker_row(
+                label_key,
+                lambda wk=wildcard_key: wx.FileDialog(
+                    self, wildcard=S(wk), style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST),
+                default, hint_key)
 
-        def dir_row(label: str, default: str = "", hint: str = "") -> wx.TextCtrl:
-            return _picker_row(label, lambda: wx.DirDialog(self), default, hint)
+        def dir_row(label_key: str, default: str = "", hint_key: str = "") -> wx.TextCtrl:
+            return _picker_row(label_key, lambda: wx.DirDialog(self), default, hint_key)
 
-        def spin_double_row(label: str, min_v: float, max_v: float,
+        def spin_double_row(label_key: str, min_v: float, max_v: float,
                             initial: float, inc: float, digits: int,
-                            hint: str = "") -> wx.TextCtrl:
-            lbl = wx.StaticText(panel, label=label)
-            tc  = wx.TextCtrl(panel, value=f"{initial:.{digits}f}", size=(80, -1))
-            sp  = wx.SpinButton(panel, style=wx.SP_VERTICAL)
+                            hint_key: str = "") -> wx.TextCtrl:
+            grid.Add(_t(wx.StaticText(panel, label=S(label_key)), label_key),
+                     0, wx.ALIGN_CENTER_VERTICAL)
+            tc = wx.TextCtrl(panel, value=f"{initial:.{digits}f}", size=(80, -1))
+            sp = wx.SpinButton(panel, style=wx.SP_VERTICAL)
             sp.SetRange(-32768, 32767)
             sp.SetValue(0)
             def adjust(delta: float) -> None:
@@ -359,210 +428,255 @@ class MainFrame(wx.Frame):
             sz = wx.BoxSizer(wx.HORIZONTAL)
             sz.Add(tc, 0)
             sz.Add(sp, 0)
-            grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-            grid.Add(sz,  0)
-            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
+            grid.Add(sz, 0)
+            if hint_key:
+                grid.Add(_t(wx.StaticText(panel, label=S(hint_key)), hint_key),
+                         0, wx.ALIGN_CENTER_VERTICAL)
+            else:
+                grid.AddSpacer(0)
             return tc
 
-        def chk_row(label: str, chk_label: str, hint: str = "") -> wx.CheckBox:
-            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            chk = wx.CheckBox(panel, label=chk_label)
+        def chk_row(label_key: str, chk_key: str, hint_key: str = "") -> wx.CheckBox:
+            grid.Add(_t(wx.StaticText(panel, label=S(label_key)), label_key),
+                     0, wx.ALIGN_CENTER_VERTICAL)
+            chk = _t(wx.CheckBox(panel, label=S(chk_key)), chk_key)
             grid.Add(chk, 0)
-            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
-            return chk
+            if hint_key:
+                grid.Add(_t(wx.StaticText(panel, label=S(hint_key)), hint_key),
+                         0, wx.ALIGN_CENTER_VERTICAL)
+            else:
+                grid.AddSpacer(0)
+            return chk  # type: ignore[return-value]
 
-        def color_row(label: str, default_rgb: tuple, hint: str = "") -> wx.Choice:
-            default_idx = next(
-                (i for i, (_, rgb) in enumerate(COLOR_PRESETS) if rgb == default_rgb), 0
-            )
-            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            ch = wx.Choice(panel, choices=_PRESET_NAMES, name=label.rstrip(":"))
-            ch.SetSelection(default_idx)
+        def color_row(label_key: str, default_rgb: tuple,
+                      hint_key: str = "") -> wx.Choice:
+            grid.Add(_t(wx.StaticText(panel, label=S(label_key)), label_key),
+                     0, wx.ALIGN_CENTER_VERTICAL)
+            ch = wx.Choice(panel, choices=_color_names())
+            ch.SetSelection(_default_color_idx(default_rgb))
+            self._color_choices.append(ch)
             swatch = wx.Panel(panel, size=(20, 20))
             swatch.SetBackgroundColour(wx.Colour(*default_rgb))
             def _update_swatch(_e, _ch=ch, _sw=swatch):
                 i = _ch.GetSelection()
-                if 0 <= i < len(COLOR_PRESETS):
-                    _sw.SetBackgroundColour(wx.Colour(*COLOR_PRESETS[i][1]))
+                if 0 <= i < len(_COLOR_PRESET_DATA):
+                    _sw.SetBackgroundColour(wx.Colour(*_COLOR_PRESET_DATA[i][1]))
                     _sw.Refresh()
             ch.Bind(wx.EVT_CHOICE, _update_swatch)
             sz = wx.BoxSizer(wx.HORIZONTAL)
             sz.Add(ch, 0, wx.ALIGN_CENTER_VERTICAL)
             sz.Add(swatch, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 4)
             grid.Add(sz, 0)
-            grid.Add(wx.StaticText(panel, label=hint), 0, wx.ALIGN_CENTER_VERTICAL) if hint else grid.AddSpacer(0)
+            if hint_key:
+                grid.Add(_t(wx.StaticText(panel, label=S(hint_key)), hint_key),
+                         0, wx.ALIGN_CENTER_VERTICAL)
+            else:
+                grid.AddSpacer(0)
             return ch
 
         # --- file / folder rows ---
 
-        self._ly_tc = file_row(
-            "LilyPond score (.ly):",
-            "LilyPond files (*.ly)|*.ly|All files (*.*)|*.*",
-            hint="(sheet music source)")
+        self._ly_tc = file_row("label_ly_file", "wildcard_ly", hint_key="hint_ly_file")
         self._ly_tc.Bind(wx.EVT_TEXT, self._on_ly_changed)
 
-        self._sf2_tc = file_row(
-            "Soundfont (.sf2):",
-            "Soundfont files (*.sf2)|*.sf2|All files (*.*)|*.*",
-            _default("soundfonts/GeneralUser-GS.sf2"),
-            hint="(instrument samples for audio)")
+        self._sf2_tc = file_row("label_sf2", "wildcard_sf2",
+                                _default("soundfonts/GeneralUser-GS.sf2"),
+                                hint_key="hint_sf2")
 
         _default_lily = r"C:\Program Files\lilypond-2.24.4\bin\lilypond.exe"
-        self._lilypond_tc = file_row(
-            "LilyPond binary:",
-            "Executables (*.exe)|*.exe|All files (*.*)|*.*",
-            _default_lily if Path(_default_lily).exists() else "",
-            hint="(blank = use system PATH)")
+        self._lilypond_tc = file_row("label_lilypond_bin", "wildcard_exe",
+                                     _default_lily if Path(_default_lily).exists() else "",
+                                     hint_key="hint_lilypond_bin")
 
-        self._ffmpeg_tc = file_row(
-            "ffmpeg binary:",
-            "Executables (*.exe)|*.exe|All files (*.*)|*.*",
-            _default("bin/ffmpeg.exe"),
-            hint="(blank = use system PATH)")
+        self._ffmpeg_tc = file_row("label_ffmpeg_bin", "wildcard_exe",
+                                   _default("bin/ffmpeg.exe"),
+                                   hint_key="hint_ffmpeg_bin")
 
-        self._fluidsynth_tc = file_row(
-            "fluidsynth binary:",
-            "Executables (*.exe)|*.exe|All files (*.*)|*.*",
-            _default("bin/fluidsynth/fluidsynth.exe"),
-            hint="(blank = use system PATH)")
+        self._fluidsynth_tc = file_row("label_fluidsynth_bin", "wildcard_exe",
+                                       _default("bin/fluidsynth/fluidsynth.exe"),
+                                       hint_key="hint_fluidsynth_bin")
 
-        self._dir_tc = dir_row(
-            "Output folder:",
-            str(HERE / "output"),
-            hint="(where to save the MP4)")
+        self._dir_tc = dir_row("label_output_folder", str(HERE / "output"),
+                               hint_key="hint_output_folder")
 
-        # --- numeric rows ---
-
-        grid.Add(wx.StaticText(panel, label="Resolution (W × H):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._width_ctrl  = wx.SpinCtrl(panel, min=320, max=7680, initial=DEFAULT_WIDTH,  size=(90, -1), name="Video width")
-        self._height_ctrl = wx.SpinCtrl(panel, min=240, max=4320, initial=DEFAULT_HEIGHT, size=(90, -1), name="Video height")
+        # --- resolution ---
+        grid.Add(_t(wx.StaticText(panel, label=S("label_resolution")), "label_resolution"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
+        self._width_ctrl  = wx.SpinCtrl(panel, min=320, max=7680, initial=DEFAULT_WIDTH,
+                                        size=(90, -1), name="Video width")
+        self._height_ctrl = wx.SpinCtrl(panel, min=240, max=4320, initial=DEFAULT_HEIGHT,
+                                        size=(90, -1), name="Video height")
+        self._res_x_lbl = _t(wx.StaticText(panel, label=S("label_resolution_x")), "label_resolution_x")
         res_box = wx.BoxSizer(wx.HORIZONTAL)
         res_box.Add(self._width_ctrl)
-        res_box.Add(wx.StaticText(panel, label=" × "), 0, wx.ALIGN_CENTER_VERTICAL)
+        res_box.Add(self._res_x_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         res_box.Add(self._height_ctrl)
         grid.Add(res_box)
         grid.AddSpacer(0)
 
-        grid.Add(wx.StaticText(panel, label="Frame rate (fps):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._fps_ctrl = wx.SpinCtrl(panel, min=15, max=60, initial=DEFAULT_FPS, size=(90, -1), name="Frame rate")
+        # --- fps ---
+        grid.Add(_t(wx.StaticText(panel, label=S("label_frame_rate")), "label_frame_rate"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
+        self._fps_ctrl = wx.SpinCtrl(panel, min=15, max=60, initial=DEFAULT_FPS,
+                                     size=(90, -1), name="Frame rate")
         grid.Add(self._fps_ctrl)
         grid.AddSpacer(0)
 
-        self._tempo_tc = spin_double_row(
-            "Target BPM:", 20.0, 400.0, 0.0, 1.0, 0,
-            hint="(0 = use score tempo)")
+        self._tempo_tc = spin_double_row("label_target_bpm", 20.0, 400.0, 0.0, 1.0, 0,
+                                        hint_key="hint_target_bpm")
 
-        # --- overlay / option checkboxes ---
+        # --- overlays ---
+        self._fill_height_chk = chk_row("label_fit_to_height", "chk_fit_to_height")
 
-        self._fill_height_chk = chk_row(
-            "Fit to height:", "Pad strip to output height (centres content, white background)")
-
-        self._cursor_chk = chk_row(
-            "Playback cursor:", "Show vertical cursor line")
+        self._cursor_chk = chk_row("label_playback_cursor", "chk_playback_cursor")
         self._cursor_chk.SetValue(True)
-        self._cursor_color_cp = color_row(
-            "Cursor color:", (220, 50, 50))
-        grid.Add(wx.StaticText(panel, label="Cursor width (px):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._cursor_width_ctrl = wx.SpinCtrl(panel, min=1, max=8, initial=2, size=(60, -1), name="Cursor width")
+        self._cursor_color_cp = color_row("label_cursor_color", (220, 50, 50))
+
+        grid.Add(_t(wx.StaticText(panel, label=S("label_cursor_width")), "label_cursor_width"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
+        self._cursor_width_ctrl = wx.SpinCtrl(panel, min=1, max=8, initial=2,
+                                              size=(60, -1), name="Cursor width")
         grid.Add(self._cursor_width_ctrl)
         grid.AddSpacer(0)
 
-        self._note_highlight_chk = chk_row(
-            "Note highlight:", "Flash active note/chord")
+        self._note_highlight_chk = chk_row("label_note_highlight", "chk_note_highlight")
         self._note_highlight_chk.SetValue(True)
-        self._highlight_color_cp = color_row(
-            "Highlight color:", (50, 120, 220))
+        self._highlight_color_cp = color_row("label_highlight_color", (50, 120, 220))
 
-        self._trail_chk = chk_row(
-            "Note trail:", "Show fading dot trail + played-region tint")
+        self._trail_chk = chk_row("label_note_trail", "chk_note_trail")
         self._trail_chk.SetValue(True)
-        self._title_overlay_chk = chk_row(
-            "Title overlay:", "Show title / composer (fixed, does not scroll)",
-            hint=r"(from \header in .ly)")
+
+        self._title_overlay_chk = chk_row("label_title_overlay", "chk_title_overlay",
+                                          hint_key="hint_title_overlay")
         self._title_overlay_chk.SetValue(True)
-        self._footer_overlay_chk = chk_row(
-            "Footer overlay:", "Show copyright / tagline (fixed, does not scroll)",
-            hint=r"(from \header in .ly)")
-        self._bar_timing_chk = chk_row(
-            "Bar timing:", "Scroll one step per bar (smoother for fast passages)")
+
+        self._footer_overlay_chk = chk_row("label_footer_overlay", "chk_footer_overlay",
+                                           hint_key="hint_footer_overlay")
+
+        self._bar_timing_chk = chk_row("label_bar_timing", "chk_bar_timing")
         self._bar_timing_chk.SetValue(True)
-        self._bar_numbers_chk = chk_row(
-            "Bar numbers:", "Show bar number above every bar line")
+
+        self._bar_numbers_chk = chk_row("label_bar_numbers", "chk_bar_numbers")
         self._bar_numbers_chk.SetValue(True)
 
-        # Metronome: checkbox + Settings… button
-        grid.Add(wx.StaticText(panel, label="Metronome click:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._metronome_chk = wx.CheckBox(
-            panel, label="Mix synthesized click track into audio",
-            name="Metronome click enabled")
+        # --- metronome ---
+        grid.Add(_t(wx.StaticText(panel, label=S("label_metronome")), "label_metronome"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
+        self._metronome_chk = _t(
+            wx.CheckBox(panel, label=S("chk_metronome"), name="Metronome click enabled"),
+            "chk_metronome")
         grid.Add(self._metronome_chk, 0, wx.ALIGN_CENTER_VERTICAL)
-        _btn_metro = wx.Button(panel, label="Click settings…", size=(110, -1),
-                               name="Click settings")
-        _btn_metro.Bind(wx.EVT_BUTTON, self._on_metronome_settings)
-        grid.Add(_btn_metro, 0)
+        self._btn_metro = _t(
+            wx.Button(panel, label=S("btn_click_settings"), size=(130, -1)),
+            "btn_click_settings")
+        self._btn_metro.Bind(wx.EVT_BUTTON, self._on_metronome_settings)
+        grid.Add(self._btn_metro, 0)
 
-        # Watermark: summary label + Settings… button
-        grid.Add(wx.StaticText(panel, label="Watermark:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._watermark_summary = wx.StaticText(panel, label="(none)")
+        # --- watermark ---
+        grid.Add(_t(wx.StaticText(panel, label=S("label_watermark")), "label_watermark"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
+        self._watermark_summary = wx.StaticText(panel, label=S("watermark_none"))
         grid.Add(self._watermark_summary, 0, wx.ALIGN_CENTER_VERTICAL)
-        _btn_wm = wx.Button(panel, label="Branding settings…", size=(130, -1),
-                            name="Branding settings")
-        _btn_wm.Bind(wx.EVT_BUTTON, self._on_watermark_settings)
-        grid.Add(_btn_wm, 0)
+        self._btn_wm = _t(
+            wx.Button(panel, label=S("btn_branding_settings"), size=(140, -1)),
+            "btn_branding_settings")
+        self._btn_wm.Bind(wx.EVT_BUTTON, self._on_watermark_settings)
+        grid.Add(self._btn_wm, 0)
 
-        grid.Add(wx.StaticText(panel, label="Fade in/out (frames):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._fade_frames_ctrl = wx.SpinCtrl(panel, min=0, max=120, initial=0, size=(60, -1),
-                                             name="Fade frames")
+        # --- fade / volume ---
+        self._fade_frames_ctrl_lbl = None  # tracked via grid
+        grid.Add(_t(wx.StaticText(panel, label=S("label_fade_frames")), "label_fade_frames"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
+        self._fade_frames_ctrl = wx.SpinCtrl(panel, min=0, max=120, initial=0,
+                                             size=(60, -1), name="Fade frames")
         grid.Add(self._fade_frames_ctrl)
-        grid.Add(wx.StaticText(panel, label="(0 = no fade, 15 = 0.5s at 30fps)"), 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(_t(wx.StaticText(panel, label=S("hint_fade_frames")), "hint_fade_frames"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
 
-        grid.Add(wx.StaticText(panel, label="Music volume (dB):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(_t(wx.StaticText(panel, label=S("label_music_volume")), "label_music_volume"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
         self._volume_db_ctrl = _spin_double(panel, -12.0, 30.0, 14.5, 0.5, "Music volume dB")
         grid.Add(self._volume_db_ctrl)
-        grid.Add(wx.StaticText(panel, label="dB boost applied to output mix"), 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(_t(wx.StaticText(panel, label=S("hint_music_volume")), "hint_music_volume"),
+                 0, wx.ALIGN_CENTER_VERTICAL)
 
-        self._auto_open_chk = chk_row(
-            "Auto-open MP4:", "Open video in default player when encoding completes")
+        self._auto_open_chk = chk_row("label_auto_open", "chk_auto_open")
 
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
-        # Action buttons
+        # --- action buttons ---
         btn_box = wx.BoxSizer(wx.HORIZONTAL)
-        self._btn_mp4 = wx.Button(panel, label="Encode MP4")
-        self._btn_cancel = wx.Button(panel, label="Cancel")
+        self._btn_mp4    = _t(wx.Button(panel, label=S("btn_encode_mp4")), "btn_encode_mp4")
+        self._btn_cancel = _t(wx.Button(panel, label=S("btn_cancel")),     "btn_cancel")
         self._btn_cancel.Disable()
-        btn_box.Add(self._btn_mp4, 0, wx.RIGHT, 8)
-        btn_box.Add(self._btn_cancel)
-        root.Add(btn_box, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        self._btn_help = _t(wx.Button(panel, label=S("btn_help"), size=(70, -1)), "btn_help")
+        # Language toggle shows the OTHER language name
+        self._btn_lang = wx.Button(panel, label="Español", size=(80, -1))
+        btn_box.Add(self._btn_mp4,    0, wx.RIGHT, 8)
+        btn_box.Add(self._btn_cancel, 0, wx.RIGHT, 8)
+        btn_box.AddStretchSpacer()
+        btn_box.Add(self._btn_help,   0, wx.RIGHT, 8)
+        btn_box.Add(self._btn_lang,   0)
+        root.Add(btn_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
-        # Log
-        root.Add(wx.StaticText(panel, label="Log:"), 0, wx.LEFT, 10)
+        # --- log ---
+        root.Add(_t(wx.StaticText(panel, label=S("label_log")), "label_log"), 0, wx.LEFT, 10)
         self._log = wx.TextCtrl(
             panel,
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP | wx.HSCROLL,
-            name="Pipeline output log",
+            name=S("log_accessible_name"),
         )
         self._log.SetFont(
-            wx.Font(9, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
-        )
+            wx.Font(9, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         root.Add(self._log, 1, wx.EXPAND | wx.ALL, 10)
 
-        # Post-completion buttons
+        # --- post-completion buttons ---
         post_box = wx.BoxSizer(wx.HORIZONTAL)
-        self._btn_open_mp4 = wx.Button(panel, label="Open MP4")
-        self._btn_open_folder = wx.Button(panel, label="Open Folder")
+        self._btn_open_mp4    = _t(wx.Button(panel, label=S("btn_open_mp4")),    "btn_open_mp4")
+        self._btn_open_folder = _t(wx.Button(panel, label=S("btn_open_folder")), "btn_open_folder")
         self._btn_open_mp4.Disable()
         self._btn_open_folder.Disable()
-        post_box.Add(self._btn_open_mp4, 0, wx.RIGHT, 8)
-        post_box.Add(self._btn_open_folder)
+        post_box.Add(self._btn_open_mp4,    0, wx.RIGHT, 8)
+        post_box.Add(self._btn_open_folder, 0)
         root.Add(post_box, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         panel.SetSizer(root)
 
-        self._btn_mp4.Bind(wx.EVT_BUTTON, self._on_encode_mp4)
+        self._btn_mp4.Bind(wx.EVT_BUTTON,    self._on_encode_mp4)
         self._btn_cancel.Bind(wx.EVT_BUTTON, self._on_cancel)
-        self._btn_open_mp4.Bind(wx.EVT_BUTTON, self._on_open_mp4)
+        self._btn_help.Bind(wx.EVT_BUTTON,   self._on_help)
+        self._btn_lang.Bind(wx.EVT_BUTTON,   self._on_toggle_lang)
+        self._btn_open_mp4.Bind(wx.EVT_BUTTON,    self._on_open_mp4)
         self._btn_open_folder.Bind(wx.EVT_BUTTON, self._on_open_folder)
+
+    # ------------------------------------------------------------------
+    # Language switching
+    # ------------------------------------------------------------------
+
+    def _on_toggle_lang(self, _event) -> None:
+        global _lang
+        _lang = "es" if _lang == "en" else "en"
+        self._apply_language()
+
+    def _apply_language(self) -> None:
+        # Update all tracked label widgets
+        for widget, key in self._i18n:
+            widget.SetLabel(S(key))
+        # Update color choice item lists (preserving selection)
+        names = _color_names()
+        for ch in self._color_choices:
+            sel = ch.GetSelection()
+            ch.Clear()
+            for name in names:
+                ch.Append(name)
+            ch.SetSelection(sel if sel >= 0 else 0)
+        # Update watermark summary if currently showing "(none)"
+        if not self._watermark.path:
+            self._watermark_summary.SetLabel(S("watermark_none"))
+        # Window title and language button
+        self.SetTitle(S("window_title"))
+        self._btn_lang.SetLabel("English" if _lang == "es" else "Español")
+        self.Layout()
 
     # ------------------------------------------------------------------
     # Log helpers
@@ -582,7 +696,7 @@ class MainFrame(wx.Frame):
         self._overwriting_log_line = True
 
     # ------------------------------------------------------------------
-    # Encode MP4
+    # BPM auto-detect
     # ------------------------------------------------------------------
 
     def _on_ly_changed(self, _event) -> None:
@@ -600,33 +714,34 @@ class MainFrame(wx.Frame):
             except Exception:
                 pass
 
+    # ------------------------------------------------------------------
+    # Encode MP4
+    # ------------------------------------------------------------------
+
     def _on_encode_mp4(self, _event) -> None:
-        ly = self._ly_tc.GetValue().strip()
-        sf2 = self._sf2_tc.GetValue().strip()
+        ly      = self._ly_tc.GetValue().strip()
+        sf2     = self._sf2_tc.GetValue().strip()
         out_dir = self._dir_tc.GetValue().strip()
 
         if not ly or not Path(ly).is_file():
-            wx.MessageBox("Select a valid .ly file.", "Input required", wx.ICON_WARNING)
+            wx.MessageBox(S("msg_select_ly"), S("msg_input_required_title"), wx.ICON_WARNING)
             return
         if not sf2 or not Path(sf2).is_file():
-            wx.MessageBox("Select a valid .sf2 soundfont.", "Input required", wx.ICON_WARNING)
+            wx.MessageBox(S("msg_select_sf2"), S("msg_input_required_title"), wx.ICON_WARNING)
             return
         if not out_dir:
-            wx.MessageBox("Select an output folder.", "Input required", wx.ICON_WARNING)
+            wx.MessageBox(S("msg_select_output_folder"), S("msg_input_required_title"), wx.ICON_WARNING)
             return
         Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-        width = self._width_ctrl.GetValue()
+        width  = self._width_ctrl.GetValue()
         height = self._height_ctrl.GetValue()
         if width % 2 != 0 or height % 2 != 0:
-            wx.MessageBox(
-                "Width and height must both be even numbers (ffmpeg requirement).",
-                "Invalid resolution", wx.ICON_WARNING,
-            )
+            wx.MessageBox(S("msg_even_resolution"), S("msg_invalid_res_title"), wx.ICON_WARNING)
             return
 
         try:
-            _bpm_val = float(self._tempo_tc.GetValue())
+            _bpm_val  = float(self._tempo_tc.GetValue())
             tempo_bpm = _bpm_val if _bpm_val > 0 else None
         except ValueError:
             tempo_bpm = None
@@ -634,41 +749,32 @@ class MainFrame(wx.Frame):
         out_mp4 = str(Path(out_dir) / f"{Path(ly).stem}.mp4")
         self._mp4_path = out_mp4
 
-        fps = self._fps_ctrl.GetValue()
-        cursor_line = self._cursor_chk.GetValue()
-        cursor_color = _parse_color(self._cursor_color_cp, (220, 50, 50))
-        cursor_width = self._cursor_width_ctrl.GetValue()
-        note_highlight = self._note_highlight_chk.GetValue()
-        highlight_color = _parse_color(self._highlight_color_cp, (50, 120, 220))
-        trail = self._trail_chk.GetValue()
-        overlay_title = self._title_overlay_chk.GetValue()
-        overlay_footer = self._footer_overlay_chk.GetValue()
-        use_bar_timing = self._bar_timing_chk.GetValue()
-        bar_numbers = self._bar_numbers_chk.GetValue()
-        metronome = self._metronome_chk.GetValue()
-        click_a = self._click_a
-        click_b = self._click_b
-        count_in_bars = self._count_in
-        fade_frames = self._fade_frames_ctrl.GetValue()
-        watermark = self._watermark
-        fill_height = self._fill_height_chk.GetValue()
-        volume_db = self._volume_db_ctrl.GetValue()
-        lilypond_exe = self._lilypond_tc.GetValue().strip() or None
-        ffmpeg_exe = self._ffmpeg_tc.GetValue().strip() or None
-        fluidsynth_exe = self._fluidsynth_tc.GetValue().strip() or None
-
         config = PipelineConfig(
             ly=ly, sf2=sf2, out_mp4=out_mp4,
-            width=width, height=height, fps=fps, tempo_bpm=tempo_bpm,
-            cursor_line=cursor_line, cursor_color=cursor_color, cursor_width=cursor_width,
-            note_highlight=note_highlight, highlight_color=highlight_color,
-            trail=trail, overlay_title=overlay_title, overlay_footer=overlay_footer,
-            use_bar_timing=use_bar_timing, bar_numbers=bar_numbers,
-            metronome=metronome, click_a=click_a, click_b=click_b,
-            count_in_bars=count_in_bars, fade_frames=fade_frames,
-            watermark=watermark, fill_height=fill_height,
-            volume_db=volume_db, click_volume_db=self._click_volume_db,
-            lilypond_exe=lilypond_exe, ffmpeg_exe=ffmpeg_exe, fluidsynth_exe=fluidsynth_exe,
+            width=width, height=height,
+            fps=self._fps_ctrl.GetValue(),
+            tempo_bpm=tempo_bpm,
+            cursor_line=self._cursor_chk.GetValue(),
+            cursor_color=_parse_color(self._cursor_color_cp, (220, 50, 50)),
+            cursor_width=self._cursor_width_ctrl.GetValue(),
+            note_highlight=self._note_highlight_chk.GetValue(),
+            highlight_color=_parse_color(self._highlight_color_cp, (50, 120, 220)),
+            trail=self._trail_chk.GetValue(),
+            overlay_title=self._title_overlay_chk.GetValue(),
+            overlay_footer=self._footer_overlay_chk.GetValue(),
+            use_bar_timing=self._bar_timing_chk.GetValue(),
+            bar_numbers=self._bar_numbers_chk.GetValue(),
+            metronome=self._metronome_chk.GetValue(),
+            click_a=self._click_a, click_b=self._click_b,
+            count_in_bars=self._count_in,
+            fade_frames=self._fade_frames_ctrl.GetValue(),
+            watermark=self._watermark,
+            fill_height=self._fill_height_chk.GetValue(),
+            volume_db=self._volume_db_ctrl.GetValue(),
+            click_volume_db=self._click_volume_db,
+            lilypond_exe=self._lilypond_tc.GetValue().strip() or None,
+            ffmpeg_exe=self._ffmpeg_tc.GetValue().strip() or None,
+            fluidsynth_exe=self._fluidsynth_tc.GetValue().strip() or None,
         )
 
         self._log.Clear()
@@ -678,7 +784,7 @@ class MainFrame(wx.Frame):
         self._btn_open_folder.Disable()
         self._cancel_event = threading.Event()
         self._btn_cancel.Enable()
-        self.SetStatusText("Encoding…")
+        self.SetStatusText(S("status_encoding"))
 
         stream = _LogStream(self._log_newline, self._log_overwrite)
         threading.Thread(
@@ -691,7 +797,7 @@ class MainFrame(wx.Frame):
         if self._cancel_event is not None:
             self._cancel_event.set()
             self._btn_cancel.Disable()
-            self.SetStatusText("Cancelling…")
+            self.SetStatusText(S("status_cancelling"))
 
     def _on_metronome_settings(self, _event) -> None:
         dlg = MetronomeDialog(self, self._click_a, self._click_b, self._count_in,
@@ -704,53 +810,52 @@ class MainFrame(wx.Frame):
         dlg = WatermarkDialog(self, self._watermark)
         if dlg.ShowModal() == wx.ID_OK:
             self._watermark = dlg.get_values()
-            name = Path(self._watermark.path).name if self._watermark.path else "(none)"
+            name = Path(self._watermark.path).name if self._watermark.path else S("watermark_none")
             self._watermark_summary.SetLabel(name)
         dlg.Destroy()
 
-    def _run_pipeline(self, config: PipelineConfig, stream, cancel_event: threading.Event) -> None:
+    def _on_help(self, _event) -> None:
+        dlg = HelpDialog(self)
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def _run_pipeline(self, config: PipelineConfig, stream,
+                      cancel_event: threading.Event) -> None:
         old_out, old_err = sys.stdout, sys.stderr
         sys.stdout = stream
         sys.stderr = stream
         try:
             generate_mp4(
-                ly_path=config.ly,
-                sf2_path=config.sf2,
-                out_path=config.out_mp4,
-                width=config.width,
-                height=config.height,
-                fps=config.fps,
+                ly_path=config.ly, sf2_path=config.sf2, out_path=config.out_mp4,
+                width=config.width, height=config.height, fps=config.fps,
                 tempo_bpm=config.tempo_bpm,
                 lilypond_exe=config.lilypond_exe,
                 ffmpeg_exe=config.ffmpeg_exe,
                 fluidsynth_exe=config.fluidsynth_exe,
-                cursor_line=config.cursor_line,
-                cursor_color=config.cursor_color,
+                cursor_line=config.cursor_line, cursor_color=config.cursor_color,
                 cursor_width=config.cursor_width,
                 trail=config.trail,
-                note_highlight=config.note_highlight,
-                highlight_color=config.highlight_color,
-                overlay_title=config.overlay_title,
-                overlay_footer=config.overlay_footer,
-                use_bar_timing=config.use_bar_timing,
-                bar_numbers=config.bar_numbers,
+                note_highlight=config.note_highlight, highlight_color=config.highlight_color,
+                overlay_title=config.overlay_title, overlay_footer=config.overlay_footer,
+                use_bar_timing=config.use_bar_timing, bar_numbers=config.bar_numbers,
                 metronome=config.metronome,
-                click_accent=config.click_a,
-                click_beat=config.click_b,
+                click_accent=config.click_a, click_beat=config.click_b,
                 count_in_bars=config.count_in_bars,
                 fade_frames=config.fade_frames,
                 watermark=config.watermark,
                 fill_height=config.fill_height,
-                volume_db=config.volume_db,
-                click_volume_db=config.click_volume_db,
+                volume_db=config.volume_db, click_volume_db=config.click_volume_db,
                 cancel_event=cancel_event,
             )
-            wx.CallAfter(self._pipeline_done, success=True, cancelled=False, path=config.out_mp4)
+            wx.CallAfter(self._pipeline_done, success=True, cancelled=False,
+                         path=config.out_mp4)
         except InterruptedError:
-            wx.CallAfter(self._pipeline_done, success=False, cancelled=True, path=config.out_mp4)
+            wx.CallAfter(self._pipeline_done, success=False, cancelled=True,
+                         path=config.out_mp4)
         except Exception as exc:
-            wx.CallAfter(self._log_newline, f"\nERROR: {exc}")
-            wx.CallAfter(self._pipeline_done, success=False, cancelled=False, path=config.out_mp4)
+            wx.CallAfter(self._log_newline, S("log_error", exc=exc))
+            wx.CallAfter(self._pipeline_done, success=False, cancelled=False,
+                         path=config.out_mp4)
         finally:
             sys.stdout = old_out
             sys.stderr = old_err
@@ -760,11 +865,11 @@ class MainFrame(wx.Frame):
         self._btn_cancel.Disable()
         self._cancel_event = None
         if cancelled:
-            self._log_newline("\nCancelled.")
-            self.SetStatusText("Cancelled.")
+            self._log_newline(S("log_cancelled"))
+            self.SetStatusText(S("status_cancelled"))
         elif success:
-            self._log_newline(f"\nDone: {path}")
-            self.SetStatusText(f"Done: {Path(path).name}")
+            self._log_newline(S("log_done", path=path))
+            self.SetStatusText(S("status_done", filename=Path(path).name))
             self._btn_open_mp4.Enable()
             self._btn_open_folder.Enable()
             if self._auto_open_chk.GetValue():
@@ -773,8 +878,8 @@ class MainFrame(wx.Frame):
                 except Exception:
                     pass
         else:
-            self._log_newline("\nEncoding failed. See log above.")
-            self.SetStatusText("Encoding failed.")
+            self._log_newline(S("log_encoding_failed"))
+            self.SetStatusText(S("status_encoding_failed"))
 
     # ------------------------------------------------------------------
     # Post-completion
@@ -785,7 +890,7 @@ class MainFrame(wx.Frame):
             try:
                 os.startfile(self._mp4_path)
             except Exception as exc:
-                wx.MessageBox(str(exc), "Could not open MP4", wx.ICON_ERROR)
+                wx.MessageBox(str(exc), S("msg_cannot_open_mp4_title"), wx.ICON_ERROR)
 
     def _on_open_folder(self, _event) -> None:
         if self._mp4_path:
