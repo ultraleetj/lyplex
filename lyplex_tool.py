@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import wave
 import warnings
 from bisect import bisect_left
@@ -79,6 +80,14 @@ class WatermarkParams:
 class ClickResult:
     wav_path: Path | None = None
     count_in_ms: float = 0.0
+
+# ---------------------------------------------------------------------------
+# Cancellation helper
+# ---------------------------------------------------------------------------
+
+def _check_cancel(event: threading.Event | None) -> None:
+    if event is not None and event.is_set():
+        raise InterruptedError("Pipeline cancelled.")
 
 # ---------------------------------------------------------------------------
 # Preflight checks
@@ -1123,6 +1132,7 @@ def encode_mp4(
     fill_y_offset: int = 0,
     volume_db: float = 14.5,
     click_volume_db: float = -3.0,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     ffmpeg = _require_binary("ffmpeg", ffmpeg_exe)
     # y pixel offset: strip_crop_top removed from top of render; fill_y_offset added back
@@ -1183,8 +1193,12 @@ def encode_mp4(
     else:
         fixed_overlay = title_footer_overlay or watermark_overlay
 
+    _cancelled = False
     try:
         for frame_n in range(n_frames):
+            if cancel_event is not None and frame_n % 15 == 0 and cancel_event.is_set():
+                _cancelled = True
+                break
             t_ms = frame_n / fps * 1000.0 - count_in_ms
             offset_svgu = scroll_offset_at(t_ms, timing_map, width, ms_keys)
             offset_px = int(offset_svgu * px_per_svgu)
@@ -1263,9 +1277,16 @@ def encode_mp4(
             frame.save(proc.stdin, format="PPM")
 
     finally:
-        proc.stdin.close()
+        if _cancelled:
+            proc.terminate()
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
         proc.wait()
 
+    if _cancelled:
+        raise InterruptedError("Pipeline cancelled.")
     if proc.returncode != 0:
         raise RuntimeError("ffmpeg encoding failed.")
 
@@ -1303,6 +1324,7 @@ def generate_mp4(
     fill_height: bool = False,
     volume_db: float = 14.5,
     click_volume_db: float = -3.0,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     # Preflight
     _require_binary("lilypond", lilypond_exe)
@@ -1335,12 +1357,15 @@ def generate_mp4(
         svg_paths = compile_svg(source, workdir, lilypond_exe, bar_numbers=bar_numbers)
         if len(svg_paths) > 1:
             print(f"[lyplex] {len(svg_paths)} SVG pages — concatenating strips")
+        _check_cancel(cancel_event)
 
         print("[lyplex] compiling timing MIDI...")
         timing_midi_path = compile_timing_midi(source, workdir, lilypond_exe)
+        _check_cancel(cancel_event)
 
         print("[lyplex] compiling audio MIDI...")
         audio_midi_path = compile_audio_midi(source, workdir, lilypond_exe)
+        _check_cancel(cancel_event)
 
         # Parse all SVG pages; extract anchors with cumulative x-offsets across pages.
         svg_roots = [etree.parse(str(p)).getroot() for p in svg_paths]
@@ -1428,6 +1453,7 @@ def generate_mp4(
         wav_path = Path(workdir) / "audio.wav"
         print("[lyplex] rendering audio...")
         render_audio_wav(audio_midi_path, sf2_path, wav_path, fluidsynth_exe)
+        _check_cancel(cancel_event)
 
         # Metronome click track
         click_result: ClickResult | None = None
@@ -1477,6 +1503,7 @@ def generate_mp4(
             click_result=click_result,
             volume_db=volume_db,
             click_volume_db=click_volume_db,
+            cancel_event=cancel_event,
         )
 
         print(f"[lyplex] done: {out_path}")
@@ -1495,6 +1522,16 @@ def generate_mp4(
 if __name__ == "__main__":
     import argparse
 
+    def _parse_rgb(s: str | None, default: tuple[int, int, int]) -> tuple[int, int, int]:
+        if not s:
+            return default
+        try:
+            parts = [int(x.strip()) for x in s.split(",")]
+            return (parts[0], parts[1], parts[2])
+        except Exception:
+            print(f"[lyplex] WARNING: could not parse color {s!r}, using default {default}")
+            return default
+
     parser = argparse.ArgumentParser(description="LyPlex: LilyPond → scrolling MP4")
     parser.add_argument("ly_file", help=".ly input file")
     parser.add_argument("sf2_file", help=".sf2 soundfont")
@@ -1505,20 +1542,46 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--no-bar-timing", action="store_true",
                         help="Use note-level timing instead of bar-level")
-    parser.add_argument("--no-cursor", dest="cursor", action="store_false", default=True, help="Hide cursor line")
-    parser.add_argument("--no-trail", dest="trail", action="store_false", default=True, help="Hide past-beat trail dots")
-    parser.add_argument("--no-highlight", dest="highlight", action="store_false", default=True, help="Hide active note highlight")
+    parser.add_argument("--no-cursor", dest="cursor", action="store_false", default=True,
+                        help="Hide cursor line")
+    parser.add_argument("--cursor-color", default=None, metavar="R,G,B",
+                        help="Cursor color (default: 220,50,50)")
+    parser.add_argument("--cursor-width", type=int, default=2, metavar="PX",
+                        help="Cursor line width in pixels (default: 2)")
+    parser.add_argument("--no-trail", dest="trail", action="store_false", default=True,
+                        help="Hide past-beat trail dots")
+    parser.add_argument("--no-highlight", dest="highlight", action="store_false", default=True,
+                        help="Hide active note highlight")
+    parser.add_argument("--highlight-color", default=None, metavar="R,G,B",
+                        help="Note highlight color (default: 50,120,220)")
     parser.add_argument("--no-bar-numbers", action="store_true", help="Hide bar numbers in score")
     parser.add_argument("--metronome", action="store_true", help="Add metronome click track")
     parser.add_argument("--count-in", type=int, default=0, metavar="BARS",
                         help="Count-in bars before music (requires --metronome)")
     parser.add_argument("--tempo", type=float, default=None, metavar="BPM",
-                        help="Target BPM (e.g. 100). Requires \\tempo in .ly. "
-                             "Original BPM is shown in pipeline log.")
+                        help="Target BPM. Requires \\tempo in .ly.")
     parser.add_argument("--fill-height", action="store_true",
                         help="Pad strip to requested height (centres content, white background)")
     parser.add_argument("--no-title", dest="overlay_title", action="store_false", default=True,
                         help="Hide title/composer overlay")
+    parser.add_argument("--volume-db", type=float, default=14.5, metavar="DB",
+                        help="Music volume gain in dB (default: 14.5)")
+    parser.add_argument("--click-volume-db", type=float, default=-3.0, metavar="DB",
+                        help="Click track volume relative to music in dB (default: -3.0)")
+    parser.add_argument("--fade-frames", type=int, default=0, metavar="N",
+                        help="Fade in/out duration in frames (0 = no fade)")
+    parser.add_argument("--lilypond", default=None, metavar="PATH",
+                        help="Path to lilypond executable (default: system PATH)")
+    parser.add_argument("--ffmpeg", default=None, metavar="PATH",
+                        help="Path to ffmpeg executable (default: system PATH)")
+    parser.add_argument("--fluidsynth", default=None, metavar="PATH",
+                        help="Path to fluidsynth executable (default: system PATH)")
+    parser.add_argument("--watermark", default=None, metavar="PATH",
+                        help="Watermark image path (SVG, PNG, or JPEG)")
+    parser.add_argument("--watermark-position", default="BR", choices=["TL", "TR", "BL", "BR"],
+                        help="Watermark corner position (default: BR)")
+    parser.add_argument("--watermark-opacity", type=float, default=0.6, metavar="0-1",
+                        help="Watermark opacity (default: 0.6)")
     args = parser.parse_args()
 
     out_path = args.output or str(
@@ -1535,12 +1598,26 @@ if __name__ == "__main__":
         fps=args.fps,
         use_bar_timing=not args.no_bar_timing,
         cursor_line=args.cursor,
+        cursor_color=_parse_rgb(args.cursor_color, (220, 50, 50)),
+        cursor_width=args.cursor_width,
         trail=args.trail,
         note_highlight=args.highlight,
+        highlight_color=_parse_rgb(args.highlight_color, (50, 120, 220)),
         overlay_title=args.overlay_title,
         bar_numbers=not args.no_bar_numbers,
         metronome=args.metronome,
         count_in_bars=args.count_in,
         tempo_bpm=args.tempo,
         fill_height=args.fill_height,
+        volume_db=args.volume_db,
+        click_volume_db=args.click_volume_db,
+        fade_frames=args.fade_frames,
+        lilypond_exe=args.lilypond,
+        ffmpeg_exe=args.ffmpeg,
+        fluidsynth_exe=args.fluidsynth,
+        watermark=WatermarkParams(
+            path=args.watermark or "",
+            position=args.watermark_position,
+            opacity=args.watermark_opacity,
+        ) if args.watermark else None,
     )
