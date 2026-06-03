@@ -1,29 +1,32 @@
-upstream/
+# Build artifacts
+dist/
+build/
+portable/
+
+# Large binaries (distribute separately)
 bin/
 soundfonts/
 
+# Examples (dev/test only)
+examples/
+
 # Python
 __pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-env/
+*.pyc
+*.pyo
+.pytest_cache/
 
-# Build / distribution
-build/
-dist/
-portable/
-
-# Pipeline output
+# Output
 output/
+*.mp4
+*.wav
+*.mid
+*.pdf
 
-# Temp / OS
-*.tmp
-*.log
-.DS_Store
-Thumbs.db
+# Temp
+lyplex_*/
 
-# IDE
-.vscode/
-.idea/
+# Dev-only
+CLAUDE.md
+LyPlex-1.0.0-windows/
+LyPlex-1.0.0-windows.zip
