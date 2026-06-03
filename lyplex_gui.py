@@ -149,8 +149,10 @@ class HelpDialog(wx.Dialog):
 # MetronomeDialog
 # ---------------------------------------------------------------------------
 
+_WAVEFORM_VALUES = ["sine", "square", "triangle", "saw"]
+_WAVEFORM_KEYS   = ["waveform_sine", "waveform_square", "waveform_triangle", "waveform_saw"]
+
 class MetronomeDialog(wx.Dialog):
-    _WAVEFORMS = ["sine", "square", "triangle", "saw"]
 
     def __init__(self, parent, click_a: ClickParams, click_b: ClickParams, count_in: int,
                  click_volume_db: float = -3.0):
@@ -173,16 +175,18 @@ class MetronomeDialog(wx.Dialog):
             grid.Add(wx.StaticText(panel, label=S(hint_key)) if hint_key else (0, 0),
                      0, wx.ALIGN_CENTER_VERTICAL)
 
+        wf_labels = [S(k) for k in _WAVEFORM_KEYS]
+
         def _wf_idx(p: ClickParams) -> int:
             try:
-                return self._WAVEFORMS.index(p.waveform)
+                return _WAVEFORM_VALUES.index(p.waveform)
             except ValueError:
                 return 0
 
         _section("metro_section_accent")
         self._a_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_a.freq_hz))
         _row("metro_label_frequency", self._a_freq, "metro_hint_frequency")
-        self._a_wave = wx.Choice(panel, choices=self._WAVEFORMS)
+        self._a_wave = wx.Choice(panel, choices=wf_labels)
         self._a_wave.SetSelection(_wf_idx(click_a))
         _row("metro_label_waveform", self._a_wave)
         self._a_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_a.duration_ms))
@@ -193,7 +197,7 @@ class MetronomeDialog(wx.Dialog):
         _section("metro_section_beat")
         self._b_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_b.freq_hz))
         _row("metro_label_frequency", self._b_freq, "metro_hint_frequency")
-        self._b_wave = wx.Choice(panel, choices=self._WAVEFORMS)
+        self._b_wave = wx.Choice(panel, choices=wf_labels)
         self._b_wave.SetSelection(_wf_idx(click_b))
         _row("metro_label_waveform", self._b_wave)
         self._b_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_b.duration_ms))
@@ -218,15 +222,18 @@ class MetronomeDialog(wx.Dialog):
         root.Fit(self)
 
     def get_values(self) -> tuple[ClickParams, ClickParams, int, float]:
+        def _wf(choice: wx.Choice) -> str:
+            i = choice.GetSelection()
+            return _WAVEFORM_VALUES[i] if 0 <= i < len(_WAVEFORM_VALUES) else "sine"
         a = ClickParams(
             freq_hz=float(self._a_freq.GetValue()),
-            waveform=self._a_wave.GetStringSelection(),
+            waveform=_wf(self._a_wave),
             duration_ms=float(self._a_dur.GetValue()),
             amplitude=self._a_amp.GetValue(),
         )
         b = ClickParams(
             freq_hz=float(self._b_freq.GetValue()),
-            waveform=self._b_wave.GetStringSelection(),
+            waveform=_wf(self._b_wave),
             duration_ms=float(self._b_dur.GetValue()),
             amplitude=self._b_amp.GetValue(),
         )
@@ -251,7 +258,8 @@ class WatermarkDialog(wx.Dialog):
         self._path_tc = wx.TextCtrl(panel, value=params.path)
         btn_browse = wx.Button(panel, label=S("btn_browse"), size=(80, -1))
         def _on_browse(_e):
-            dlg = wx.FileDialog(self, wildcard=S("wildcard_images"),
+            dlg = wx.FileDialog(self, message=S("dlg_open_file"),
+                                wildcard=S("wildcard_images"),
                                 style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
             if dlg.ShowModal() == wx.ID_OK:
                 self._path_tc.SetValue(dlg.GetPath())
@@ -392,11 +400,15 @@ class MainFrame(wx.Frame):
             return _picker_row(
                 label_key,
                 lambda wk=wildcard_key: wx.FileDialog(
-                    self, wildcard=S(wk), style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST),
+                    self, message=S("dlg_open_file"),
+                    wildcard=S(wk), style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST),
                 default, hint_key)
 
         def dir_row(label_key: str, default: str = "", hint_key: str = "") -> wx.TextCtrl:
-            return _picker_row(label_key, lambda: wx.DirDialog(self), default, hint_key)
+            return _picker_row(
+                label_key,
+                lambda: wx.DirDialog(self, message=S("dlg_open_folder")),
+                default, hint_key)
 
         def spin_double_row(label_key: str, min_v: float, max_v: float,
                             initial: float, inc: float, digits: int,
@@ -503,9 +515,9 @@ class MainFrame(wx.Frame):
         grid.Add(_t(wx.StaticText(panel, label=S("label_resolution")), "label_resolution"),
                  0, wx.ALIGN_CENTER_VERTICAL)
         self._width_ctrl  = wx.SpinCtrl(panel, min=320, max=7680, initial=DEFAULT_WIDTH,
-                                        size=(90, -1), name="Video width")
+                                        size=(90, -1), name=S("accessible_video_width"))
         self._height_ctrl = wx.SpinCtrl(panel, min=240, max=4320, initial=DEFAULT_HEIGHT,
-                                        size=(90, -1), name="Video height")
+                                        size=(90, -1), name=S("accessible_video_height"))
         self._res_x_lbl = _t(wx.StaticText(panel, label=S("label_resolution_x")), "label_resolution_x")
         res_box = wx.BoxSizer(wx.HORIZONTAL)
         res_box.Add(self._width_ctrl)
@@ -518,7 +530,7 @@ class MainFrame(wx.Frame):
         grid.Add(_t(wx.StaticText(panel, label=S("label_frame_rate")), "label_frame_rate"),
                  0, wx.ALIGN_CENTER_VERTICAL)
         self._fps_ctrl = wx.SpinCtrl(panel, min=15, max=60, initial=DEFAULT_FPS,
-                                     size=(90, -1), name="Frame rate")
+                                     size=(90, -1), name=S("accessible_frame_rate"))
         grid.Add(self._fps_ctrl)
         grid.AddSpacer(0)
 
@@ -535,7 +547,7 @@ class MainFrame(wx.Frame):
         grid.Add(_t(wx.StaticText(panel, label=S("label_cursor_width")), "label_cursor_width"),
                  0, wx.ALIGN_CENTER_VERTICAL)
         self._cursor_width_ctrl = wx.SpinCtrl(panel, min=1, max=8, initial=2,
-                                              size=(60, -1), name="Cursor width")
+                                              size=(60, -1), name=S("accessible_cursor_width"))
         grid.Add(self._cursor_width_ctrl)
         grid.AddSpacer(0)
 
@@ -563,7 +575,7 @@ class MainFrame(wx.Frame):
         grid.Add(_t(wx.StaticText(panel, label=S("label_metronome")), "label_metronome"),
                  0, wx.ALIGN_CENTER_VERTICAL)
         self._metronome_chk = _t(
-            wx.CheckBox(panel, label=S("chk_metronome"), name="Metronome click enabled"),
+            wx.CheckBox(panel, label=S("chk_metronome"), name=S("accessible_metronome")),
             "chk_metronome")
         grid.Add(self._metronome_chk, 0, wx.ALIGN_CENTER_VERTICAL)
         self._btn_metro = _t(
@@ -588,14 +600,14 @@ class MainFrame(wx.Frame):
         grid.Add(_t(wx.StaticText(panel, label=S("label_fade_frames")), "label_fade_frames"),
                  0, wx.ALIGN_CENTER_VERTICAL)
         self._fade_frames_ctrl = wx.SpinCtrl(panel, min=0, max=120, initial=0,
-                                             size=(60, -1), name="Fade frames")
+                                             size=(60, -1), name=S("accessible_fade_frames"))
         grid.Add(self._fade_frames_ctrl)
         grid.Add(_t(wx.StaticText(panel, label=S("hint_fade_frames")), "hint_fade_frames"),
                  0, wx.ALIGN_CENTER_VERTICAL)
 
         grid.Add(_t(wx.StaticText(panel, label=S("label_music_volume")), "label_music_volume"),
                  0, wx.ALIGN_CENTER_VERTICAL)
-        self._volume_db_ctrl = _spin_double(panel, -12.0, 30.0, 14.5, 0.5, "Music volume dB")
+        self._volume_db_ctrl = _spin_double(panel, -12.0, 30.0, 14.5, 0.5, S("accessible_music_volume"))
         grid.Add(self._volume_db_ctrl)
         grid.Add(_t(wx.StaticText(panel, label=S("hint_music_volume")), "hint_music_volume"),
                  0, wx.ALIGN_CENTER_VERTICAL)
