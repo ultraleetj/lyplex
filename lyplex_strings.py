@@ -142,6 +142,25 @@ STRINGS: dict[str, dict[str, str]] = {
         "wm_label_opacity":  "Opacity:",
         "wm_hint_opacity":   "0.05 – 1.0",
 
+        # Accessibility names (screen readers)
+        "accessible_video_width":   "Video width",
+        "accessible_video_height":  "Video height",
+        "accessible_frame_rate":    "Frame rate",
+        "accessible_cursor_width":  "Cursor width",
+        "accessible_metronome":     "Metronome click enabled",
+        "accessible_fade_frames":   "Fade frames",
+        "accessible_music_volume":  "Music volume dB",
+
+        # File / folder dialog titles
+        "dlg_open_file":   "Open file",
+        "dlg_open_folder": "Open folder",
+
+        # Waveform display names (MetronomeDialog Choice)
+        "waveform_sine":     "Sine",
+        "waveform_square":   "Square",
+        "waveform_triangle": "Triangle",
+        "waveform_saw":      "Sawtooth",
+
         # Color preset display names
         "color_red":    "Red",
         "color_blue":   "Blue",
@@ -226,7 +245,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "chk_footer_overlay":    "Mostrar copyright / eslogan (fijo, no se desplaza)",
         "hint_footer_overlay":   r"(de \header en el .ly)",
 
-        "label_bar_timing":      "Sincrонía por compás:",
+        "label_bar_timing":      "Sincronía por compás:",
         "chk_bar_timing":        "Desplazar un paso por compás (más suave en pasajes rápidos)",
 
         "label_bar_numbers":     "Números de compás:",
@@ -292,6 +311,25 @@ STRINGS: dict[str, dict[str, str]] = {
         "wm_hint_position":  "esquina del video",
         "wm_label_opacity":  "Opacidad:",
         "wm_hint_opacity":   "0.05 – 1.0",
+
+        # Nombres accesibles (lectores de pantalla)
+        "accessible_video_width":   "Ancho del video",
+        "accessible_video_height":  "Alto del video",
+        "accessible_frame_rate":    "Fotogramas por segundo",
+        "accessible_cursor_width":  "Ancho del cursor",
+        "accessible_metronome":     "Click de metrónomo activado",
+        "accessible_fade_frames":   "Fotogramas de fundido",
+        "accessible_music_volume":  "Volumen de música en dB",
+
+        # Títulos de diálogos de archivo / carpeta
+        "dlg_open_file":   "Abrir archivo",
+        "dlg_open_folder": "Abrir carpeta",
+
+        # Nombres de formas de onda (MetronomeDialog)
+        "waveform_sine":     "Seno",
+        "waveform_square":   "Cuadrada",
+        "waveform_triangle": "Triangular",
+        "waveform_saw":      "Sierra",
 
         # Nombres de colores
         "color_red":    "Rojo",
