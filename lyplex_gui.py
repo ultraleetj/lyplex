@@ -5,6 +5,7 @@ Run: python lyplex_gui.py
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -138,7 +139,7 @@ class MetronomeDialog(wx.Dialog):
         _row("Amplitude:", self._b_amp, "0.05 – 1.0")
 
         _section("Count-in")
-        self._count_in_spin = wx.SpinCtrl(panel, min=0, max=2, initial=count_in, name="Count-in bars")
+        self._count_in_spin = wx.SpinCtrl(panel, min=0, max=4, initial=count_in, name="Count-in bars")
         _row("Bars:", self._count_in_spin, "0 = no count-in")
 
         _section("Mix level")
@@ -272,12 +273,12 @@ class _LogStream:
 class MainFrame(wx.Frame):
 
     def __init__(self):
-        super().__init__(None, title="LyPlex — Scrolling Sheet Music", size=(740, 900))
+        super().__init__(None, title="LyPlex — Scrolling Sheet Music", size=(740, 940))
         self._mp4_path: str | None = None
-        self._html_path: str | None = None
         self._overwriting_log_line = False
         self._last_line_start = 0
         self._bpm_timer: wx.CallLater | None = None
+        self._cancel_event: threading.Event | None = None
         # Metronome / watermark dialog state (updated when dialogs are accepted)
         self._click_a = ClickParams(freq_hz=1500.0, waveform="sine", duration_ms=20.0, amplitude=0.6)
         self._click_b = ClickParams(freq_hz=1000.0, waveform="sine", duration_ms=20.0, amplitude=0.4)
@@ -294,10 +295,6 @@ class MainFrame(wx.Frame):
     # UI construction
     # Labels created before controls so MSAA finds the preceding Static
     # as the accessible name for each native HWND control.
-    # All file/dir pickers are plain TextCtrl + Button so the TextCtrl
-    # is a direct panel child — composite controls (FilePickerCtrl,
-    # DirPickerCtrl, SpinCtrlDouble) bury their inner HWND one level
-    # deeper, which breaks MSAA sibling-label detection.
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
@@ -307,14 +304,9 @@ class MainFrame(wx.Frame):
         grid = wx.FlexGridSizer(cols=3, hgap=6, vgap=8)
         grid.AddGrowableCol(1, 1)
 
-        # --- helpers (closures over panel/grid/self) ---
-        # Each helper creates the StaticText label FIRST so it precedes
-        # the TextCtrl in HWND z-order — MSAA scans backward for the
-        # nearest preceding Static to use as the accessible name.
-
         def _picker_row(label: str, make_dialog, default: str = "", hint: str = "") -> wx.TextCtrl:
-            lbl = wx.StaticText(panel, label=label)   # FIRST — MSAA anchor
-            tc  = wx.TextCtrl(panel, value=default)   # SECOND
+            lbl = wx.StaticText(panel, label=label)
+            tc  = wx.TextCtrl(panel, value=default)
             btn = wx.Button(panel, label="Browse…", size=(70, -1))
             def on_browse(_e, _tc=tc):
                 dlg = make_dialog()
@@ -497,6 +489,7 @@ class MainFrame(wx.Frame):
         self._bar_numbers_chk = chk_row(
             "Bar numbers:", "Show bar number above every bar line")
         self._bar_numbers_chk.SetValue(True)
+
         # Metronome: checkbox + Settings… button
         grid.Add(wx.StaticText(panel, label="Metronome click:"), 0, wx.ALIGN_CENTER_VERTICAL)
         self._metronome_chk = wx.CheckBox(
@@ -528,16 +521,18 @@ class MainFrame(wx.Frame):
         grid.Add(self._volume_db_ctrl)
         grid.Add(wx.StaticText(panel, label="dB boost applied to output mix"), 0, wx.ALIGN_CENTER_VERTICAL)
 
+        self._auto_open_chk = chk_row(
+            "Auto-open MP4:", "Open video in default player when encoding completes")
+
         root.Add(grid, 0, wx.EXPAND | wx.ALL, 10)
 
         # Action buttons
         btn_box = wx.BoxSizer(wx.HORIZONTAL)
         self._btn_mp4 = wx.Button(panel, label="Encode MP4")
-        self._btn_html = wx.Button(panel, label="Generate HTML")
-        self._btn_html.Disable()
-        self._btn_html.SetToolTip("HTML preview not yet implemented.")
+        self._btn_cancel = wx.Button(panel, label="Cancel")
+        self._btn_cancel.Disable()
         btn_box.Add(self._btn_mp4, 0, wx.RIGHT, 8)
-        btn_box.Add(self._btn_html)
+        btn_box.Add(self._btn_cancel)
         root.Add(btn_box, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         # Log
@@ -554,19 +549,20 @@ class MainFrame(wx.Frame):
 
         # Post-completion buttons
         post_box = wx.BoxSizer(wx.HORIZONTAL)
-        self._btn_open_html = wx.Button(panel, label="Open HTML")
-        self._btn_explorer = wx.Button(panel, label="Show in Explorer")
-        self._btn_open_html.Disable()
-        self._btn_explorer.Disable()
-        post_box.Add(self._btn_open_html, 0, wx.RIGHT, 8)
-        post_box.Add(self._btn_explorer)
+        self._btn_open_mp4 = wx.Button(panel, label="Open MP4")
+        self._btn_open_folder = wx.Button(panel, label="Open Folder")
+        self._btn_open_mp4.Disable()
+        self._btn_open_folder.Disable()
+        post_box.Add(self._btn_open_mp4, 0, wx.RIGHT, 8)
+        post_box.Add(self._btn_open_folder)
         root.Add(post_box, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         panel.SetSizer(root)
 
         self._btn_mp4.Bind(wx.EVT_BUTTON, self._on_encode_mp4)
-        self._btn_open_html.Bind(wx.EVT_BUTTON, self._on_open_html)
-        self._btn_explorer.Bind(wx.EVT_BUTTON, self._on_show_explorer)
+        self._btn_cancel.Bind(wx.EVT_BUTTON, self._on_cancel)
+        self._btn_open_mp4.Bind(wx.EVT_BUTTON, self._on_open_mp4)
+        self._btn_open_folder.Bind(wx.EVT_BUTTON, self._on_open_folder)
 
     # ------------------------------------------------------------------
     # Log helpers
@@ -678,15 +674,24 @@ class MainFrame(wx.Frame):
         self._log.Clear()
         self._overwriting_log_line = False
         self._btn_mp4.Disable()
-        self._btn_explorer.Disable()
+        self._btn_open_mp4.Disable()
+        self._btn_open_folder.Disable()
+        self._cancel_event = threading.Event()
+        self._btn_cancel.Enable()
         self.SetStatusText("Encoding…")
 
         stream = _LogStream(self._log_newline, self._log_overwrite)
         threading.Thread(
             target=self._run_pipeline,
-            args=(config, stream),
+            args=(config, stream, self._cancel_event),
             daemon=True,
         ).start()
+
+    def _on_cancel(self, _event) -> None:
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+            self._btn_cancel.Disable()
+            self.SetStatusText("Cancelling…")
 
     def _on_metronome_settings(self, _event) -> None:
         dlg = MetronomeDialog(self, self._click_a, self._click_b, self._count_in,
@@ -703,7 +708,7 @@ class MainFrame(wx.Frame):
             self._watermark_summary.SetLabel(name)
         dlg.Destroy()
 
-    def _run_pipeline(self, config: PipelineConfig, stream) -> None:
+    def _run_pipeline(self, config: PipelineConfig, stream, cancel_event: threading.Event) -> None:
         old_out, old_err = sys.stdout, sys.stderr
         sys.stdout = stream
         sys.stderr = stream
@@ -738,36 +743,53 @@ class MainFrame(wx.Frame):
                 fill_height=config.fill_height,
                 volume_db=config.volume_db,
                 click_volume_db=config.click_volume_db,
+                cancel_event=cancel_event,
             )
-            wx.CallAfter(self._pipeline_done, success=True, path=config.out_mp4)
+            wx.CallAfter(self._pipeline_done, success=True, cancelled=False, path=config.out_mp4)
+        except InterruptedError:
+            wx.CallAfter(self._pipeline_done, success=False, cancelled=True, path=config.out_mp4)
         except Exception as exc:
             wx.CallAfter(self._log_newline, f"\nERROR: {exc}")
-            wx.CallAfter(self._pipeline_done, success=False, path=config.out_mp4)
+            wx.CallAfter(self._pipeline_done, success=False, cancelled=False, path=config.out_mp4)
         finally:
             sys.stdout = old_out
             sys.stderr = old_err
 
-    def _pipeline_done(self, success: bool, path: str) -> None:
+    def _pipeline_done(self, success: bool, cancelled: bool, path: str) -> None:
         self._btn_mp4.Enable()
-        if success:
-            msg, status = f"\nDone: {path}", f"Done: {Path(path).name}"
-            self._btn_explorer.Enable()
+        self._btn_cancel.Disable()
+        self._cancel_event = None
+        if cancelled:
+            self._log_newline("\nCancelled.")
+            self.SetStatusText("Cancelled.")
+        elif success:
+            self._log_newline(f"\nDone: {path}")
+            self.SetStatusText(f"Done: {Path(path).name}")
+            self._btn_open_mp4.Enable()
+            self._btn_open_folder.Enable()
+            if self._auto_open_chk.GetValue():
+                try:
+                    os.startfile(path)
+                except Exception:
+                    pass
         else:
-            msg, status = "\nEncoding failed. See log above.", "Encoding failed."
-        self._log_newline(msg)
-        self.SetStatusText(status)
+            self._log_newline("\nEncoding failed. See log above.")
+            self.SetStatusText("Encoding failed.")
 
     # ------------------------------------------------------------------
     # Post-completion
     # ------------------------------------------------------------------
 
-    def _on_open_html(self, _event) -> None:
-        if self._html_path and Path(self._html_path).is_file():
-            webbrowser.open(self._html_path)
-
-    def _on_show_explorer(self, _event) -> None:
+    def _on_open_mp4(self, _event) -> None:
         if self._mp4_path and Path(self._mp4_path).is_file():
-            subprocess.Popen(["explorer", "/select,", self._mp4_path])
+            try:
+                os.startfile(self._mp4_path)
+            except Exception as exc:
+                wx.MessageBox(str(exc), "Could not open MP4", wx.ICON_ERROR)
+
+    def _on_open_folder(self, _event) -> None:
+        if self._mp4_path:
+            subprocess.Popen(["explorer", str(Path(self._mp4_path).parent)])
 
 
 # ---------------------------------------------------------------------------
