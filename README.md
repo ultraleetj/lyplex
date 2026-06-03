@@ -77,3 +77,85 @@ LyPlex injects the single-strip paper layout and `\pointAndClickTypes` automatic
 - LilyPond 2.24 required; other versions untested
 - Very long scores (>10 min) may use significant RAM for the strip PNG
 - `\repeat volta` is automatically unfolded so the scroll covers the full piece
+
+---
+
+# LyPlex (Español — América Latina)
+
+Convierte un archivo de partitura LilyPond (`.ly`) en un video MP4 con desplazamiento horizontal y audio sincronizado.
+
+## Qué hace
+
+- Compila `.ly` → tira SVG + MIDI mediante LilyPond
+- Correlaciona los anclajes de notas (SVG) con los tiempos de inicio (MIDI) para construir un mapa de sincronización
+- Renderiza un video con desplazamiento en cualquier resolución, con superposiciones configurables
+- Sintetiza el audio con FluidSynth y un soundfont
+- Opcional: pista de metrónomo, compases de cuenta regresiva, marca de agua, fundido de entrada/salida, números de compás
+
+## Requisitos
+
+**Paquetes de Python** (`pip install -r requirements.txt`):
+```
+mido, cairosvg, Pillow, lxml, wxPython
+```
+
+**Binarios externos** (deben estar en el PATH o configurarse desde la interfaz gráfica):
+- [LilyPond 2.24](https://lilypond.org/download.html)
+- [ffmpeg](https://ffmpeg.org/download.html)
+- [FluidSynth](https://www.fluidsynth.org/)
+- Un soundfont General MIDI — se recomienda [GeneralUser GS](https://schristiancollins.com/generaluser.php)
+
+## Uso
+
+### Interfaz gráfica (GUI)
+
+```
+python lyplex_gui.py
+```
+
+Seleccione un archivo `.ly`, un soundfont `.sf2`, configure las superposiciones y haga clic en **Encode MP4**.
+
+### Línea de comandos (CLI)
+
+```
+python lyplex_tool.py score.ly soundfont.sf2 [output.mp4] [options]
+```
+
+Opciones principales:
+
+| Parámetro | Por defecto | Descripción |
+|-----------|-------------|-------------|
+| `--width` / `--height` | 1920 × 1080 | Resolución de salida |
+| `--fps` | 30 | Fotogramas por segundo |
+| `--tempo BPM` | tempo de la partitura | Sobreescribe el tempo (requiere `\tempo` en el `.ly`) |
+| `--volume-db DB` | 14.5 | Amplificación del volumen de la música en dB |
+| `--fade-frames N` | 0 | Fotogramas de fundido de entrada/salida (15 ≈ 0.5s a 30fps) |
+| `--metronome` | desactivado | Mezcla una pista de clic sintetizada |
+| `--count-in BARS` | 0 | Compases de cuenta regresiva antes de la música |
+| `--click-volume-db DB` | -3.0 | Nivel de la pista de clic relativo a la música |
+| `--watermark PATH` | ninguno | Imagen de logo (SVG/PNG/JPEG); posición en la esquina mediante `--watermark-position` |
+| `--no-cursor` | — | Oculta el cursor de reproducción |
+| `--no-trail` | — | Oculta los puntos de rastro de notas |
+| `--no-highlight` | — | Oculta el resaltado de la nota activa |
+| `--cursor-color R,G,B` | 220,50,50 | Color de la línea del cursor |
+| `--highlight-color R,G,B` | 50,120,220 | Color del punto de resaltado |
+| `--fill-height` | desactivado | Rellena la tira hasta la altura total de salida |
+| `--no-bar-numbers` | — | Oculta los números de compás |
+| `--no-bar-timing` | — | Desplazamiento por nota en lugar de por compás |
+| `--lilypond PATH` | PATH del sistema | Binario de LilyPond |
+| `--ffmpeg PATH` | PATH del sistema | Binario de ffmpeg |
+| `--fluidsynth PATH` | PATH del sistema | Binario de FluidSynth |
+
+## Requisitos del formato de partitura
+
+El archivo `.ly` debe:
+1. Incluir una declaración `\version "..."`
+2. Incluir un bloque `\midi {}` dentro de `\score` (para el audio y la sincronización)
+
+LyPlex inyecta automáticamente el diseño de tira de papel en una sola línea y `\pointAndClickTypes` — no los agregue manualmente.
+
+## Notas
+
+- Se requiere LilyPond 2.24; otras versiones no han sido probadas
+- Partituras muy largas (>10 min) pueden usar una cantidad significativa de RAM para el PNG de la tira
+- `\repeat volta` se despliega automáticamente para que el desplazamiento cubra la pieza completa

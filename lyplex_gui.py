@@ -6,6 +6,7 @@ Run: python lyplex_gui.py
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -332,6 +333,18 @@ class _LogStream:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _find_lilypond() -> str:
+    on_path = shutil.which("lilypond")
+    if on_path:
+        return on_path
+    fallback = r"C:\Program Files\lilypond-2.24.4\bin\lilypond.exe"
+    return fallback if Path(fallback).exists() else ""
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -504,9 +517,8 @@ class MainFrame(wx.Frame):
                                 _default("soundfonts/GeneralUser-GS.sf2"),
                                 hint_key="hint_sf2")
 
-        _default_lily = r"C:\Program Files\lilypond-2.24.4\bin\lilypond.exe"
         self._lilypond_tc = file_row("label_lilypond_bin", "wildcard_exe",
-                                     _default_lily if Path(_default_lily).exists() else "",
+                                     _find_lilypond(),
                                      hint_key="hint_lilypond_bin")
 
         self._ffmpeg_tc = file_row("label_ffmpeg_bin", "wildcard_exe",
@@ -745,6 +757,8 @@ class MainFrame(wx.Frame):
     # ------------------------------------------------------------------
 
     def _on_encode_mp4(self, _event) -> None:
+        if not self._btn_mp4.IsEnabled():
+            return
         ly      = self._ly_tc.GetValue().strip()
         sf2     = self._sf2_tc.GetValue().strip()
         out_dir = self._dir_tc.GetValue().strip()
