@@ -74,7 +74,7 @@ LyPlex injects the single-strip paper layout and `\pointAndClickTypes` automatic
 
 - LilyPond 2.24 required. Other versions are untested and may produce unexpected results.
 - Very long scores (>10 min) can use significant RAM for the strip PNG. You've been warned.
-- **Repeat handling:** scores with `\repeat volta` are automatically unfolded — the scroll covers the full piece including all repeats. Exception: if your score uses `\new ChordNames` (chord symbol staves), unfolding is skipped, because chord parts are typically written linearly and don't match the volta structure. In that case, only the first pass plays.
+- **Repeat handling:** if your score uses `\repeat volta` or already contains `\unfoldRepeats`, LyPlex will unfold all repeats so the scroll covers the full piece. Exception: if your score uses `\new ChordNames` (chord symbol staves), unfolding is skipped — chord parts are typically written linearly and don't match the volta structure, so forcing unfold causes blank staves and audio/visual drift. In that case, only the first pass plays.
 
 ---
 
@@ -154,4 +154,4 @@ LyPlex inyecta automáticamente el diseño de tira de papel en una sola línea y
 
 - Se requiere LilyPond 2.24. Otras versiones no han sido probadas y pueden dar resultados inesperados.
 - Partituras muy largas (>10 min) pueden usar una cantidad significativa de RAM para el PNG de la tira. Considera esto una advertencia formal.
-- **Manejo de repeticiones:** las partituras con `\repeat volta` se despliegan automáticamente — el desplazamiento cubre la pieza completa, incluyendo todas las repeticiones. Excepción: si la partitura usa `\new ChordNames` (pentagrama de cifrado armónico), el despliegue se omite, porque las partes de acordes suelen estar escritas linealmente y no coinciden con la estructura de las casillas. En ese caso, solo se reproduce el primer recorrido.
+- **Manejo de repeticiones:** si la partitura usa `\repeat volta` o ya contiene `\unfoldRepeats`, LyPlex desplegará todas las repeticiones para que el desplazamiento cubra la pieza completa. Excepción: si la partitura usa `\new ChordNames` (pentagrama de cifrado armónico), el despliegue se omite — las partes de acordes suelen estar escritas linealmente y no coinciden con la estructura de las casillas, por lo que forzar el despliegue genera pentagramas vacíos y desincronización entre audio y video. En ese caso, solo se reproduce el primer recorrido.
