@@ -209,7 +209,7 @@ class MetronomeDialog(wx.Dialog):
         self._b_amp  = _spin_row("metro_label_b_amplitude", 5, 100, round(click_b.amplitude * 100), "metro_hint_amplitude")
 
         _section("metro_section_count_in")
-        self._count_in_spin = _spin_row("metro_label_bars", 0, 2, min(count_in, 2), "metro_hint_count_in_bars")
+        self._count_in_choice = _choice_row("metro_label_bars", ["0", "1", "2"], min(count_in, 2))
 
         _section("metro_section_mix")
         self._click_vol = _spin_row("metro_label_click_volume", -24, 12, round(click_volume_db), "metro_hint_click_volume")
@@ -242,7 +242,7 @@ class MetronomeDialog(wx.Dialog):
             duration_ms=float(self._b_dur.GetValue()),
             amplitude=self._b_amp.GetValue() / 100.0,
         )
-        return a, b, self._count_in_spin.GetValue(), float(self._click_vol.GetValue())
+        return a, b, self._count_in_choice.GetSelection(), float(self._click_vol.GetValue())
 
 
 # ---------------------------------------------------------------------------

@@ -132,7 +132,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "metro_hint_frequency":     "Hz",
         "metro_hint_duration":      "ms",
         "metro_hint_amplitude":     "5 – 100 %",
-        "metro_label_bars":         "Count-in:",
+        "metro_label_bars":         "Count in bars:",
         "metro_hint_count_in_bars": "0 = no count-in",
         "metro_label_click_volume": "Click volume:",
         "metro_hint_click_volume":  "dB  (relative to music)",
