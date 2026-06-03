@@ -82,7 +82,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "chk_bar_numbers":       "Show bar number above every bar line",
 
         "label_metronome":       "Metronome click:",
-        "chk_metronome":         "Mix synthesized click track into audio",
+        "chk_metronome":         "Include audio click track",
 
         "label_watermark":       "Watermark:",
         "watermark_none":        "(none)",
@@ -252,7 +252,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "chk_bar_numbers":       "Mostrar número de compás sobre cada línea divisoria",
 
         "label_metronome":       "Click de metrónomo:",
-        "chk_metronome":         "Mezclar pista de click sintetizado con el audio",
+        "chk_metronome":         "Incluir pista de clic de audio",
 
         "label_watermark":       "Marca de agua:",
         "watermark_none":        "(ninguna)",

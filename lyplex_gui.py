@@ -389,6 +389,7 @@ class MainFrame(wx.Frame):
 
         def _tn(w: _T, key: str) -> _T:
             """Track a widget for SetName updates (accessibility labels)."""
+            w.SetName(S(key))
             self._i18n.append((w, key, "SetName"))
             return w
 

@@ -72,6 +72,7 @@ LyPlex injects the single-strip paper layout and `\pointAndClickTypes` automatic
 
 ## Observations
 
+- The GUI is fully accessible to screen readers (NVDA, JAWS). All controls have accessible names and are reachable via keyboard navigation.
 - LilyPond 2.24 required. Other versions are untested and may produce unexpected results.
 - Very long scores (>10 min) can use significant RAM for the strip PNG. You've been warned.
 - **Repeat handling:** if your score uses `\repeat volta`, `\repeat percent`, or already contains `\unfoldRepeats`, LyPlex will unfold all repeats so the scroll covers the full piece. Exception: if your score uses `\new ChordNames` (chord symbol staves), unfolding is skipped. Chord parts are typically written linearly and don't match the volta structure, so forcing unfold causes blank staves and audio/visual drift. In that case the score plays as written, repeats and all, like a musician who saw the repeat signs, decided today was not the day, and kept walking.
@@ -152,6 +153,7 @@ LyPlex inyecta automáticamente el diseño de tira de papel en una sola línea y
 
 ## Observaciones
 
+- La interfaz gráfica es completamente accesible para lectores de pantalla (NVDA, JAWS). Todos los controles tienen nombres accesibles y se pueden navegar con el teclado.
 - Se requiere LilyPond 2.24. Otras versiones no han sido probadas y pueden dar resultados inesperados.
 - Partituras muy largas (>10 min) pueden usar una cantidad significativa de RAM para el PNG de la tira. Considera esto una advertencia formal.
 - **Manejo de repeticiones:** si la partitura usa `\repeat volta`, `\repeat percent`, o ya contiene `\unfoldRepeats`, LyPlex desplegará todas las repeticiones para que el desplazamiento cubra la pieza completa. Excepción: si la partitura usa `\new ChordNames` (pentagrama de cifrado armónico), el despliegue se omite. Las partes de acordes suelen estar escritas linealmente y no coinciden con la estructura de las casillas, por lo que forzar el despliegue genera pentagramas vacíos y desincronización entre audio y video. En ese caso la partitura se toca tal como está escrita, signos de repetición incluidos, como un músico que los vio, decidió que hoy no era el día, y siguió de largo.
