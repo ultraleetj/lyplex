@@ -1509,7 +1509,8 @@ def generate_mp4(
         print(f"[lyplex] done: {out_path}")
 
     finally:
-        if sys.exc_info()[0] is None:
+        exc_type = sys.exc_info()[0]
+        if exc_type is None or exc_type is InterruptedError:
             shutil.rmtree(workdir, ignore_errors=True)
         else:
             print(f"[lyplex] workdir preserved for inspection (error): {workdir}")
