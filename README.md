@@ -1,6 +1,6 @@
 # LyPlex
 
-Turn a LilyPond sheet music file (`.ly`) into a scrolling MP4 video with synchronized audio. Great for practice videos, YouTube uploads, or just showing off a piece you typeset.
+Turn a LilyPond sheet music file (`.ly`) into a scrolling MP4 video with synchronized audio. Main uses: sightreading practice videos, YouTube tutorial-style uploads, or just showing off a piece you typeset, maybe.
 
 ## How it works
 
@@ -80,7 +80,7 @@ LyPlex injects the single-strip paper layout and `\pointAndClickTypes` automatic
 
 # LyPlex (Español — América Latina)
 
-Convierte un archivo de partitura LilyPond (`.ly`) en un video MP4 con desplazamiento horizontal y audio sincronizado. Ideal para videos de práctica, publicaciones en YouTube, o simplemente para mostrar una pieza que tipografiaste con tanto esfuerzo.
+Convierte un archivo de partitura LilyPond (`.ly`) en un video MP4 con desplazamiento horizontal y audio sincronizado. Usos principales: videos de práctica para lectura a primera vista, publicaciones al estilo tutorial de YouTube, o simplemente para mostrar una pieza que tipografiaste, quizás.
 
 ## Cómo funciona
 
