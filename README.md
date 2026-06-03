@@ -16,10 +16,10 @@ mido, cairosvg, Pillow, lxml, wxPython
 ```
 
 **External binaries** (must be on PATH or set in the GUI — LyPlex will tell you loudly if one is missing):
-- [LilyPond 2.24](https://lilypond.org/download.html) — compiles the score
-- [ffmpeg](https://ffmpeg.org/download.html) — encodes the video
-- [FluidSynth](https://www.fluidsynth.org/) — synthesizes the audio
-- A General MIDI soundfont — [GeneralUser GS](https://schristiancollins.com/generaluser.php) is free and sounds great
+- [LilyPond 2.24](https://lilypond.org/download.html) — **install this yourself.** There is no such thing as a free lunch, and bundling a full notation engraving engine on top of ffmpeg, FluidSynth, and a soundfont is the kind of decision that gets you ratio'd on the internet. Install it, put it on PATH (or point the GUI at it), and we're good.
+- [ffmpeg](https://ffmpeg.org/download.html) — encodes the video (bundled in the portable zip)
+- [FluidSynth](https://www.fluidsynth.org/) — synthesizes the audio (bundled in the portable zip)
+- A General MIDI soundfont — [GeneralUser GS](https://schristiancollins.com/generaluser.php) is free and sounds great (also bundled)
 
 ## Usage
 
@@ -96,10 +96,10 @@ mido, cairosvg, Pillow, lxml, wxPython
 ```
 
 **Binarios externos** (deben estar en el PATH o configurarse desde la interfaz gráfica — LyPlex te avisará claramente si falta alguno):
-- [LilyPond 2.24](https://lilypond.org/download.html) — compila la partitura
-- [ffmpeg](https://ffmpeg.org/download.html) — codifica el video
-- [FluidSynth](https://www.fluidsynth.org/) — sintetiza el audio
-- Un soundfont General MIDI — [GeneralUser GS](https://schristiancollins.com/generaluser.php) es gratuito y suena muy bien
+- [LilyPond 2.24](https://lilypond.org/download.html) — **este lo instalas tú.** No existe el almuerzo gratis, y empaquetar un motor de tipografía musical completo encima de ffmpeg, FluidSynth y un soundfont es el tipo de decisión que te gana el odio colectivo de internet. Instálalo, ponlo en el PATH (o apunta la interfaz gráfica hacia él), y listo.
+- [ffmpeg](https://ffmpeg.org/download.html) — codifica el video (incluido en el zip portable)
+- [FluidSynth](https://www.fluidsynth.org/) — sintetiza el audio (incluido en el zip portable)
+- Un soundfont General MIDI — [GeneralUser GS](https://schristiancollins.com/generaluser.php) es gratuito y suena muy bien (también incluido)
 
 ## Uso
 
