@@ -163,6 +163,9 @@ def _strip_unfold_repeats(source: str) -> str:
 def _has_volta_repeats(source: str) -> bool:
     return bool(re.search(r"\\repeat\s+volta\b", source))
 
+def _has_percent_repeats(source: str) -> bool:
+    return bool(re.search(r"\\repeat\s+percent\b", source))
+
 def _has_chord_names(source: str) -> bool:
     return bool(re.search(r"\\new\s+ChordNames\b", source))
 
@@ -176,7 +179,8 @@ def _should_unfold_repeats(source: str) -> bool:
     linearly without matching volta structure, causing blank chord strips
     and audio/visual mismatch when unfolded.
     """
-    return (_has_volta_repeats(source) or _has_unfold_repeats(source)) and not _has_chord_names(source)
+    has_repeats = _has_volta_repeats(source) or _has_percent_repeats(source) or _has_unfold_repeats(source)
+    return has_repeats and not _has_chord_names(source)
 
 _SCORE_BLOCK_TERMINATORS = re.compile(r"\\(layout|midi|header|paper)\b")
 

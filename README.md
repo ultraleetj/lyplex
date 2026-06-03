@@ -2,6 +2,8 @@
 
 Turn a LilyPond sheet music file (`.ly`) into a scrolling MP4 video with synchronized audio. Main uses: sightreading practice videos, YouTube tutorial-style uploads, or just showing off a piece you typeset, maybe.
 
+**[Download the latest Windows release →](https://github.com/ultraleetj/lyplex/releases/latest)**
+
 ## How it works
 
 LyPlex compiles your score three ways: once for the visual SVG strip, once for timing MIDI (scroll sync), and once for audio MIDI (what you actually hear). It correlates note positions in the SVG with onset times in the MIDI to build a timing map, then renders a smooth scrolling video at whatever resolution you want.
@@ -74,13 +76,15 @@ LyPlex injects the single-strip paper layout and `\pointAndClickTypes` automatic
 
 - LilyPond 2.24 required. Other versions are untested and may produce unexpected results.
 - Very long scores (>10 min) can use significant RAM for the strip PNG. You've been warned.
-- **Repeat handling:** if your score uses `\repeat volta` or already contains `\unfoldRepeats`, LyPlex will unfold all repeats so the scroll covers the full piece. Exception: if your score uses `\new ChordNames` (chord symbol staves), unfolding is skipped — chord parts are typically written linearly and don't match the volta structure, so forcing unfold causes blank staves and audio/visual drift. In that case the score plays as written — repeats and all — like a musician who saw the repeat signs, decided today was not the day, and kept walking.
+- **Repeat handling:** if your score uses `\repeat volta`, `\repeat percent`, or already contains `\unfoldRepeats`, LyPlex will unfold all repeats so the scroll covers the full piece. Exception: if your score uses `\new ChordNames` (chord symbol staves), unfolding is skipped — chord parts are typically written linearly and don't match the volta structure, so forcing unfold causes blank staves and audio/visual drift. In that case the score plays as written — repeats and all — like a musician who saw the repeat signs, decided today was not the day, and kept walking.
 
 ---
 
 # LyPlex (Español — América Latina)
 
 Convierte un archivo de partitura LilyPond (`.ly`) en un video MP4 con desplazamiento horizontal y audio sincronizado. Usos principales: videos de práctica para lectura a primera vista, publicaciones al estilo tutorial de YouTube, o simplemente para mostrar una pieza que tipografiaste, quizás.
+
+**[Descargar la última versión para Windows →](https://github.com/ultraleetj/lyplex/releases/latest)**
 
 ## Cómo funciona
 
@@ -154,4 +158,4 @@ LyPlex inyecta automáticamente el diseño de tira de papel en una sola línea y
 
 - Se requiere LilyPond 2.24. Otras versiones no han sido probadas y pueden dar resultados inesperados.
 - Partituras muy largas (>10 min) pueden usar una cantidad significativa de RAM para el PNG de la tira. Considera esto una advertencia formal.
-- **Manejo de repeticiones:** si la partitura usa `\repeat volta` o ya contiene `\unfoldRepeats`, LyPlex desplegará todas las repeticiones para que el desplazamiento cubra la pieza completa. Excepción: si la partitura usa `\new ChordNames` (pentagrama de cifrado armónico), el despliegue se omite — las partes de acordes suelen estar escritas linealmente y no coinciden con la estructura de las casillas, por lo que forzar el despliegue genera pentagramas vacíos y desincronización entre audio y video. En ese caso la partitura se toca tal como está escrita — signos de repetición incluidos — como un músico que los vio, decidió que hoy no era el día, y siguió de largo.
+- **Manejo de repeticiones:** si la partitura usa `\repeat volta`, `\repeat percent`, o ya contiene `\unfoldRepeats`, LyPlex desplegará todas las repeticiones para que el desplazamiento cubra la pieza completa. Excepción: si la partitura usa `\new ChordNames` (pentagrama de cifrado armónico), el despliegue se omite — las partes de acordes suelen estar escritas linealmente y no coinciden con la estructura de las casillas, por lo que forzar el despliegue genera pentagramas vacíos y desincronización entre audio y video. En ese caso la partitura se toca tal como está escrita — signos de repetición incluidos — como un músico que los vio, decidió que hoy no era el día, y siguió de largo.

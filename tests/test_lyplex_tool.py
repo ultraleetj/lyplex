@@ -31,6 +31,7 @@ from lyplex_tool import (
     _strip_ties,
     _strip_unfold_repeats,
     _has_volta_repeats,
+    _has_percent_repeats,
     _has_chord_names,
     _inject_point_and_click_types,
     _add_strip_paper,
@@ -497,6 +498,17 @@ class TestHasVoltaRepeats:
         assert not _has_volta_repeats(r'\repeat tremolo 4 { c16 }')
 
 
+class TestHasPercentRepeats:
+    def test_detects_percent(self):
+        assert _has_percent_repeats(r'\repeat percent 4 { c4 }')
+
+    def test_no_percent(self):
+        assert not _has_percent_repeats(r'\score { c4 }')
+
+    def test_volta_not_percent(self):
+        assert not _has_percent_repeats(r'\repeat volta 2 { c4 }')
+
+
 class TestHasChordNames:
     def test_detects_chord_names(self):
         assert _has_chord_names(r'\new ChordNames { }')
@@ -520,6 +532,14 @@ class TestShouldUnfoldRepeats:
 
     def test_plain_source_not_unfolded(self):
         src = r'\score { c4 }'
+        assert not _should_unfold_repeats(src)
+
+    def test_percent_without_chord_names(self):
+        src = r'\repeat percent 4 { c4 }'
+        assert _should_unfold_repeats(src)
+
+    def test_percent_with_chord_names_skipped(self):
+        src = r'\repeat percent 4 { c4 } \new ChordNames { }'
         assert not _should_unfold_repeats(src)
 
 
