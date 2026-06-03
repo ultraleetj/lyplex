@@ -2,7 +2,7 @@
 
 Turn a LilyPond sheet music file (`.ly`) into a scrolling MP4 video with synchronized audio. Main uses: sightreading practice videos, YouTube tutorial-style uploads, or just showing off a piece you typeset, maybe.
 
-**[Demo video](https://github.com/ultraleetj/lyplex/releases/download/v1.0.0/scale-test-vol14.mp4)** — output sample generated with LyPlex
+**[Demo video](https://github.com/ultraleetj/lyplex/releases/download/v1.0.0/scale-test-vol14.mp4)** (output sample generated with LyPlex)
 
 **[Download the latest Windows release](https://github.com/ultraleetj/lyplex/releases/latest)**
 
@@ -28,10 +28,10 @@ mido, cairosvg, Pillow, lxml, wxPython
 ```
 
 **External binaries** (must be on PATH or set in the GUI. LyPlex will tell you loudly if one is missing):
-- [LilyPond 2.24](https://lilypond.org/download.html) — **install this yourself.** There is no such thing as a free lunch, and bundling a full notation engraving engine on top of ffmpeg, FluidSynth, and a soundfont is the kind of decision that gets you ratio'd on the internet. Install it, put it on PATH (or point the GUI at it), and we're good.
-- [ffmpeg](https://ffmpeg.org/download.html) — encodes the video (bundled in the portable zip)
-- [FluidSynth](https://www.fluidsynth.org/) — synthesizes the audio (bundled in the portable zip)
-- A General MIDI soundfont — [GeneralUser GS](https://schristiancollins.com/generaluser.php) is free and sounds great (also bundled)
+- [LilyPond 2.24](https://lilypond.org/download.html): **install this yourself.** There is no such thing as a free lunch, and bundling a full notation engraving engine on top of ffmpeg, FluidSynth, and a soundfont is the kind of decision that gets you ratio'd on the internet. Install it, put it on PATH (or point the GUI at it), and we're good.
+- [ffmpeg](https://ffmpeg.org/download.html): encodes the video (bundled in the portable zip)
+- [FluidSynth](https://www.fluidsynth.org/): synthesizes the audio (bundled in the portable zip)
+- A General MIDI soundfont: [GeneralUser GS](https://schristiancollins.com/generaluser.php) is free and sounds great (also bundled)
 
 ## CLI usage
 
@@ -68,7 +68,7 @@ Key options:
 
 Your `.ly` file must have:
 1. A `\version "..."` declaration (LilyPond requires it; so does LyPlex)
-2. A `\midi {}` block inside `\score` — this is how LyPlex gets timing and audio
+2. A `\midi {}` block inside `\score` (this is how LyPlex gets timing and audio)
 
 LyPlex injects the single-strip paper layout and `\pointAndClickTypes` automatically. Don't add them manually or things will get weird.
 
@@ -85,7 +85,7 @@ LyPlex injects the single-strip paper layout and `\pointAndClickTypes` automatic
 
 Convierte un archivo de partitura LilyPond (`.ly`) en un video MP4 con desplazamiento horizontal y audio sincronizado. Usos principales: videos de práctica para lectura a primera vista, publicaciones al estilo tutorial de YouTube, o simplemente para mostrar una pieza que tipografiaste, quizás.
 
-**[Video demo](https://github.com/ultraleetj/lyplex/releases/download/v1.0.0/scale-test-vol14.mp4)** — ejemplo de salida generado con LyPlex
+**[Video demo](https://github.com/ultraleetj/lyplex/releases/download/v1.0.0/scale-test-vol14.mp4)** (ejemplo de salida generado con LyPlex)
 
 **[Descargar la última versión para Windows](https://github.com/ultraleetj/lyplex/releases/latest)**
 
@@ -111,10 +111,10 @@ mido, cairosvg, Pillow, lxml, wxPython
 ```
 
 **Binarios externos** (deben estar en el PATH o configurarse desde la interfaz gráfica. LyPlex te avisará claramente si falta alguno):
-- [LilyPond 2.24](https://lilypond.org/download.html) — **este lo instalas tú.** No existe el almuerzo gratis, y empaquetar un motor de tipografía musical completo encima de ffmpeg, FluidSynth y un soundfont es el tipo de decisión que te gana el odio colectivo de internet. Instálalo, ponlo en el PATH (o apunta la interfaz gráfica hacia él), y listo.
-- [ffmpeg](https://ffmpeg.org/download.html) — codifica el video (incluido en el zip portable)
-- [FluidSynth](https://www.fluidsynth.org/) — sintetiza el audio (incluido en el zip portable)
-- Un soundfont General MIDI — [GeneralUser GS](https://schristiancollins.com/generaluser.php) es gratuito y suena muy bien (también incluido)
+- [LilyPond 2.24](https://lilypond.org/download.html): **este lo instalas tú.** No existe el almuerzo gratis, y empaquetar un motor de tipografía musical completo encima de ffmpeg, FluidSynth y un soundfont es el tipo de decisión que te gana el odio colectivo de internet. Instálalo, ponlo en el PATH (o apunta la interfaz gráfica hacia él), y listo.
+- [ffmpeg](https://ffmpeg.org/download.html): codifica el video (incluido en el zip portable)
+- [FluidSynth](https://www.fluidsynth.org/): sintetiza el audio (incluido en el zip portable)
+- Un soundfont General MIDI: [GeneralUser GS](https://schristiancollins.com/generaluser.php) es gratuito y suena muy bien (también incluido)
 
 ## Uso desde línea de comandos
 
@@ -151,7 +151,7 @@ Opciones principales:
 
 El archivo `.ly` debe tener:
 1. Una declaración `\version "..."` (LilyPond la exige; LyPlex también)
-2. Un bloque `\midi {}` dentro de `\score` — así es como LyPlex obtiene la sincronización y el audio
+2. Un bloque `\midi {}` dentro de `\score` (así es como LyPlex obtiene la sincronización y el audio)
 
 LyPlex inyecta automáticamente el diseño de tira de papel en una sola línea y `\pointAndClickTypes`. No los agregues manualmente o las cosas se van a poner raras.
 
