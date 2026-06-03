@@ -66,11 +66,6 @@ def _default(rel: str) -> str:
     return str(p) if p.exists() else ""
 
 
-def _spin_double(parent: wx.Window, lo: float, hi: float, val: float, inc: float, name: str) -> wx.SpinCtrlDouble:
-    c = wx.SpinCtrlDouble(parent, min=lo, max=hi, initial=val, inc=inc, name=name)
-    c.SetDigits(2)
-    return c
-
 
 # ---------------------------------------------------------------------------
 # PipelineConfig
@@ -177,11 +172,24 @@ class MetronomeDialog(wx.Dialog):
             grid.AddSpacer(0)
             grid.AddSpacer(0)
 
-        def _row(label_key: str, ctrl, hint_key: str = "") -> None:
-            grid.Add(wx.StaticText(panel, label=S(label_key)), 0, wx.ALIGN_CENTER_VERTICAL)
+        def _spin_row(label_key: str, lo: int, hi: int, val: int, hint_key: str = "") -> wx.SpinCtrl:
+            # Label created BEFORE control so UIA traversal order matches visual order.
+            lbl = wx.StaticText(panel, label=S(label_key))
+            ctrl = wx.SpinCtrl(panel, min=lo, max=hi, initial=val, name=S(label_key))
+            grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(ctrl, 0, wx.EXPAND)
             grid.Add(wx.StaticText(panel, label=S(hint_key)) if hint_key else (0, 0),
                      0, wx.ALIGN_CENTER_VERTICAL)
+            return ctrl
+
+        def _choice_row(label_key: str, choices: list[str], selection: int) -> wx.Choice:
+            lbl = wx.StaticText(panel, label=S(label_key))
+            ctrl = wx.Choice(panel, choices=choices, name=S(label_key))
+            ctrl.SetSelection(selection)
+            grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(ctrl, 0, wx.EXPAND)
+            grid.AddSpacer(0)
+            return ctrl
 
         wf_labels = [S(k) for _, k in _WAVEFORMS]
 
@@ -189,41 +197,33 @@ class MetronomeDialog(wx.Dialog):
             return next((i for i, (v, _) in enumerate(_WAVEFORMS) if v == p.waveform), 0)
 
         _section("metro_section_accent")
-        self._a_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_a.freq_hz))
-        _row("metro_label_frequency", self._a_freq, "metro_hint_frequency")
-        self._a_wave = wx.Choice(panel, choices=wf_labels)
-        self._a_wave.SetSelection(_wf_idx(click_a))
-        _row("metro_label_waveform", self._a_wave)
-        self._a_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_a.duration_ms))
-        _row("metro_label_duration", self._a_dur, "metro_hint_duration")
-        self._a_amp = _spin_double(panel, 0.05, 1.0, click_a.amplitude, 0.05, "")
-        _row("metro_label_amplitude", self._a_amp, "metro_hint_amplitude")
+        self._a_freq = _spin_row("metro_label_a_frequency", 100, 8000, int(click_a.freq_hz), "metro_hint_frequency")
+        self._a_wave = _choice_row("metro_label_a_waveform", wf_labels, _wf_idx(click_a))
+        self._a_dur  = _spin_row("metro_label_a_duration", 5, 200, int(click_a.duration_ms), "metro_hint_duration")
+        self._a_amp  = _spin_row("metro_label_a_amplitude", 5, 100, round(click_a.amplitude * 100), "metro_hint_amplitude")
 
         _section("metro_section_beat")
-        self._b_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_b.freq_hz))
-        _row("metro_label_frequency", self._b_freq, "metro_hint_frequency")
-        self._b_wave = wx.Choice(panel, choices=wf_labels)
-        self._b_wave.SetSelection(_wf_idx(click_b))
-        _row("metro_label_waveform", self._b_wave)
-        self._b_dur = wx.SpinCtrl(panel, min=5, max=200, initial=int(click_b.duration_ms))
-        _row("metro_label_duration", self._b_dur, "metro_hint_duration")
-        self._b_amp = _spin_double(panel, 0.05, 1.0, click_b.amplitude, 0.05, "")
-        _row("metro_label_amplitude", self._b_amp, "metro_hint_amplitude")
+        self._b_freq = _spin_row("metro_label_b_frequency", 100, 8000, int(click_b.freq_hz), "metro_hint_frequency")
+        self._b_wave = _choice_row("metro_label_b_waveform", wf_labels, _wf_idx(click_b))
+        self._b_dur  = _spin_row("metro_label_b_duration", 5, 200, int(click_b.duration_ms), "metro_hint_duration")
+        self._b_amp  = _spin_row("metro_label_b_amplitude", 5, 100, round(click_b.amplitude * 100), "metro_hint_amplitude")
 
         _section("metro_section_count_in")
-        self._count_in_spin = wx.SpinCtrl(panel, min=0, max=4, initial=count_in)
-        _row("metro_label_bars", self._count_in_spin, "metro_hint_count_in_bars")
+        self._count_in_spin = _spin_row("metro_label_bars", 0, 2, min(count_in, 2), "metro_hint_count_in_bars")
 
         _section("metro_section_mix")
-        self._click_vol = _spin_double(panel, -24.0, 12.0, click_volume_db, 0.5, "")
-        _row("metro_label_click_volume", self._click_vol, "metro_hint_click_volume")
+        self._click_vol = _spin_row("metro_label_click_volume", -24, 12, round(click_volume_db), "metro_hint_click_volume")
+
+        panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        panel_sizer.Add(grid, 0, wx.EXPAND | wx.ALL, 12)
+        panel_sizer.Add(wx.StaticLine(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        panel.SetSizer(panel_sizer)
 
         btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         root = wx.BoxSizer(wx.VERTICAL)
-        root.Add(grid, 0, wx.EXPAND | wx.ALL, 12)
-        root.Add(wx.StaticLine(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        root.Add(panel, 1, wx.EXPAND)
         root.Add(btns, 0, wx.EXPAND | wx.ALL, 8)
-        panel.SetSizer(root)
+        self.SetSizer(root)
         root.Fit(self)
 
     def get_values(self) -> tuple[ClickParams, ClickParams, int, float]:
@@ -234,15 +234,15 @@ class MetronomeDialog(wx.Dialog):
             freq_hz=float(self._a_freq.GetValue()),
             waveform=_wf(self._a_wave),
             duration_ms=float(self._a_dur.GetValue()),
-            amplitude=self._a_amp.GetValue(),
+            amplitude=self._a_amp.GetValue() / 100.0,
         )
         b = ClickParams(
             freq_hz=float(self._b_freq.GetValue()),
             waveform=_wf(self._b_wave),
             duration_ms=float(self._b_dur.GetValue()),
-            amplitude=self._b_amp.GetValue(),
+            amplitude=self._b_amp.GetValue() / 100.0,
         )
-        return a, b, self._count_in_spin.GetValue(), self._click_vol.GetValue()
+        return a, b, self._count_in_spin.GetValue(), float(self._click_vol.GetValue())
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +250,8 @@ class MetronomeDialog(wx.Dialog):
 # ---------------------------------------------------------------------------
 
 class WatermarkDialog(wx.Dialog):
-    _POSITIONS = ["BR", "BL", "TR", "TL"]
+    _POSITIONS     = ["BR",              "BL",             "TR",           "TL"           ]
+    _POSITION_KEYS = ["wm_pos_br",       "wm_pos_bl",      "wm_pos_tr",    "wm_pos_tl"   ]
 
     def __init__(self, parent, params: WatermarkParams):
         super().__init__(parent, title=S("wm_dialog_title"),
@@ -278,29 +279,36 @@ class WatermarkDialog(wx.Dialog):
 
         pos_idx = next((i for i, p in enumerate(self._POSITIONS) if p == params.position), 0)
         grid.Add(wx.StaticText(panel, label=S("wm_label_position")), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._pos_ch = wx.Choice(panel, choices=self._POSITIONS)
+        self._pos_ch = wx.Choice(panel, choices=[S(k) for k in self._POSITION_KEYS],
+                                 name=S("wm_label_position"))
         self._pos_ch.SetSelection(pos_idx)
         grid.Add(self._pos_ch, 0)
         grid.Add(wx.StaticText(panel, label=S("wm_hint_position")), 0, wx.ALIGN_CENTER_VERTICAL)
 
         grid.Add(wx.StaticText(panel, label=S("wm_label_opacity")), 0, wx.ALIGN_CENTER_VERTICAL)
-        self._opacity_ctrl = _spin_double(panel, 0.05, 1.0, params.opacity, 0.05, "")
+        self._opacity_ctrl = wx.SpinCtrl(panel, min=5, max=100,
+                                         initial=round(params.opacity * 100),
+                                         name=S("wm_label_opacity"))
         grid.Add(self._opacity_ctrl, 0)
         grid.Add(wx.StaticText(panel, label=S("wm_hint_opacity")), 0, wx.ALIGN_CENTER_VERTICAL)
 
+        panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        panel_sizer.Add(grid, 0, wx.EXPAND | wx.ALL, 12)
+        panel_sizer.Add(wx.StaticLine(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        panel.SetSizer(panel_sizer)
+
         btns = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         root = wx.BoxSizer(wx.VERTICAL)
-        root.Add(grid, 0, wx.EXPAND | wx.ALL, 12)
-        root.Add(wx.StaticLine(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        root.Add(panel, 1, wx.EXPAND)
         root.Add(btns, 0, wx.EXPAND | wx.ALL, 8)
-        panel.SetSizer(root)
+        self.SetSizer(root)
         root.Fit(self)
 
     def get_values(self) -> WatermarkParams:
         return WatermarkParams(
             path=self._path_tc.GetValue().strip(),
-            position=self._pos_ch.GetStringSelection(),
-            opacity=self._opacity_ctrl.GetValue(),
+            position=self._POSITIONS[self._pos_ch.GetSelection()],
+            opacity=self._opacity_ctrl.GetValue() / 100.0,
         )
 
 
@@ -634,9 +642,9 @@ class MainFrame(wx.Frame):
 
         grid.Add(_t(wx.StaticText(panel, label=S("label_music_volume")), "label_music_volume"),
                  0, wx.ALIGN_CENTER_VERTICAL)
-        self._volume_db_ctrl = _tn(
-            _spin_double(panel, -12.0, 30.0, 14.5, 0.5, S("accessible_music_volume")),
-            "accessible_music_volume")
+        self._volume_db_ctrl = _tn(wx.SpinCtrl(panel, min=-12, max=30, initial=0,
+                                               size=(60, -1), name=S("accessible_music_volume")),
+                                   "accessible_music_volume")
         grid.Add(self._volume_db_ctrl)
         grid.Add(_t(wx.StaticText(panel, label=S("hint_music_volume")), "hint_music_volume"),
                  0, wx.ALIGN_CENTER_VERTICAL)

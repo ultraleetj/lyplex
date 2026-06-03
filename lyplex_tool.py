@@ -1166,7 +1166,7 @@ def encode_mp4(
     click_result: ClickResult | None = None,
     strip_crop_top: int = 0,
     fill_y_offset: int = 0,
-    volume_db: float = 14.5,
+    volume_db: float = 0.0,
     click_volume_db: float = -3.0,
     cancel_event: threading.Event | None = None,
 ) -> None:
@@ -1358,7 +1358,7 @@ def generate_mp4(
     click_beat: ClickParams | None = None,
     count_in_bars: int = 0,  # 0-2
     fill_height: bool = False,
-    volume_db: float = 14.5,
+    volume_db: float = 0.0,
     click_volume_db: float = -3.0,
     cancel_event: threading.Event | None = None,
 ) -> None:
@@ -1596,8 +1596,8 @@ if __name__ == "__main__":
                         help="Pad strip to requested height (centres content, white background)")
     parser.add_argument("--no-title", dest="overlay_title", action="store_false", default=True,
                         help="Hide title/composer overlay")
-    parser.add_argument("--volume-db", type=float, default=14.5, metavar="DB",
-                        help="Music volume gain in dB (default: 14.5)")
+    parser.add_argument("--volume-db", type=float, default=0.0, metavar="DB",
+                        help="Music volume gain in dB (default: 0.0)")
     parser.add_argument("--click-volume-db", type=float, default=-3.0, metavar="DB",
                         help="Click track volume relative to music in dB (default: -3.0)")
     parser.add_argument("--fade-frames", type=int, default=0, metavar="N",

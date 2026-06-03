@@ -44,7 +44,7 @@ Key options:
 | `--width` / `--height` | 1920 x 1080 | Output resolution |
 | `--fps` | 30 | Frame rate |
 | `--tempo BPM` | score tempo | Override tempo (requires `\tempo` in `.ly`) |
-| `--volume-db DB` | 14.5 | Music volume boost in dB |
+| `--volume-db DB` | 0.0 | Music volume gain in dB |
 | `--fade-frames N` | 0 | Fade in/out frames (15 ≈ 0.5s at 30fps) |
 | `--metronome` | off | Mix a synthesized click track into the audio |
 | `--count-in BARS` | 0 | Count-in bars before music starts |
@@ -125,7 +125,7 @@ Opciones principales:
 | `--width` / `--height` | 1920 x 1080 | Resolución de salida |
 | `--fps` | 30 | Fotogramas por segundo |
 | `--tempo BPM` | tempo de la partitura | Sobreescribe el tempo (requiere `\tempo` en el `.ly`) |
-| `--volume-db DB` | 14.5 | Amplificación del volumen de la música en dB |
+| `--volume-db DB` | 0.0 | Ganancia de volumen de la música en dB |
 | `--fade-frames N` | 0 | Fotogramas de fundido de entrada/salida (15 ≈ 0.5s a 30fps) |
 | `--metronome` | desactivado | Mezcla una pista de clic sintetizada en el audio |
 | `--count-in BARS` | 0 | Compases de cuenta regresiva antes de que empiece la música |
