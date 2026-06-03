@@ -11,6 +11,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 import wx
 
@@ -149,8 +150,14 @@ class HelpDialog(wx.Dialog):
 # MetronomeDialog
 # ---------------------------------------------------------------------------
 
-_WAVEFORM_VALUES = ["sine", "square", "triangle", "saw"]
-_WAVEFORM_KEYS   = ["waveform_sine", "waveform_square", "waveform_triangle", "waveform_saw"]
+_WAVEFORMS: list[tuple[str, str]] = [
+    ("sine",     "waveform_sine"),
+    ("square",   "waveform_square"),
+    ("triangle", "waveform_triangle"),
+    ("saw",      "waveform_saw"),
+]
+
+_T = TypeVar("_T", bound=wx.Window)
 
 class MetronomeDialog(wx.Dialog):
 
@@ -175,13 +182,10 @@ class MetronomeDialog(wx.Dialog):
             grid.Add(wx.StaticText(panel, label=S(hint_key)) if hint_key else (0, 0),
                      0, wx.ALIGN_CENTER_VERTICAL)
 
-        wf_labels = [S(k) for k in _WAVEFORM_KEYS]
+        wf_labels = [S(k) for _, k in _WAVEFORMS]
 
         def _wf_idx(p: ClickParams) -> int:
-            try:
-                return _WAVEFORM_VALUES.index(p.waveform)
-            except ValueError:
-                return 0
+            return next((i for i, (v, _) in enumerate(_WAVEFORMS) if v == p.waveform), 0)
 
         _section("metro_section_accent")
         self._a_freq = wx.SpinCtrl(panel, min=100, max=8000, initial=int(click_a.freq_hz))
@@ -224,7 +228,7 @@ class MetronomeDialog(wx.Dialog):
     def get_values(self) -> tuple[ClickParams, ClickParams, int, float]:
         def _wf(choice: wx.Choice) -> str:
             i = choice.GetSelection()
-            return _WAVEFORM_VALUES[i] if 0 <= i < len(_WAVEFORM_VALUES) else "sine"
+            return _WAVEFORMS[i][0] if 0 <= i < len(_WAVEFORMS) else "sine"
         a = ClickParams(
             freq_hz=float(self._a_freq.GetValue()),
             waveform=_wf(self._a_wave),
@@ -345,8 +349,8 @@ class MainFrame(wx.Frame):
         self._count_in = 0
         self._click_volume_db = -3.0
         self._watermark = WatermarkParams()
-        # i18n tracking: list of (widget, string_key) for SetLabel on language change
-        self._i18n: list[tuple[wx.Window, str]] = []
+        # i18n tracking: (widget, string_key, setter_method) — SetLabel or SetName
+        self._i18n: list[tuple[wx.Window, str, str]] = []
         self._color_choices: list[wx.Choice] = []
         self._build_ui()
         self.CreateStatusBar()
@@ -365,9 +369,14 @@ class MainFrame(wx.Frame):
         grid = wx.FlexGridSizer(cols=3, hgap=6, vgap=8)
         grid.AddGrowableCol(1, 1)
 
-        # ---- i18n tracking helper ----
-        def _t(w: wx.Window, key: str) -> wx.Window:
-            self._i18n.append((w, key))
+        # ---- i18n tracking helpers ----
+        def _t(w: _T, key: str) -> _T:
+            self._i18n.append((w, key, "SetLabel"))
+            return w
+
+        def _tn(w: _T, key: str) -> _T:
+            """Track a widget for SetName updates (accessibility labels)."""
+            self._i18n.append((w, key, "SetName"))
             return w
 
         # ---- row builder helpers ----
@@ -458,7 +467,7 @@ class MainFrame(wx.Frame):
                          0, wx.ALIGN_CENTER_VERTICAL)
             else:
                 grid.AddSpacer(0)
-            return chk  # type: ignore[return-value]
+            return chk
 
         def color_row(label_key: str, default_rgb: tuple,
                       hint_key: str = "") -> wx.Choice:
@@ -514,10 +523,12 @@ class MainFrame(wx.Frame):
         # --- resolution ---
         grid.Add(_t(wx.StaticText(panel, label=S("label_resolution")), "label_resolution"),
                  0, wx.ALIGN_CENTER_VERTICAL)
-        self._width_ctrl  = wx.SpinCtrl(panel, min=320, max=7680, initial=DEFAULT_WIDTH,
-                                        size=(90, -1), name=S("accessible_video_width"))
-        self._height_ctrl = wx.SpinCtrl(panel, min=240, max=4320, initial=DEFAULT_HEIGHT,
-                                        size=(90, -1), name=S("accessible_video_height"))
+        self._width_ctrl  = _tn(wx.SpinCtrl(panel, min=320, max=7680, initial=DEFAULT_WIDTH,
+                                        size=(90, -1), name=S("accessible_video_width")),
+                                "accessible_video_width")
+        self._height_ctrl = _tn(wx.SpinCtrl(panel, min=240, max=4320, initial=DEFAULT_HEIGHT,
+                                        size=(90, -1), name=S("accessible_video_height")),
+                                "accessible_video_height")
         self._res_x_lbl = _t(wx.StaticText(panel, label=S("label_resolution_x")), "label_resolution_x")
         res_box = wx.BoxSizer(wx.HORIZONTAL)
         res_box.Add(self._width_ctrl)
@@ -529,8 +540,9 @@ class MainFrame(wx.Frame):
         # --- fps ---
         grid.Add(_t(wx.StaticText(panel, label=S("label_frame_rate")), "label_frame_rate"),
                  0, wx.ALIGN_CENTER_VERTICAL)
-        self._fps_ctrl = wx.SpinCtrl(panel, min=15, max=60, initial=DEFAULT_FPS,
-                                     size=(90, -1), name=S("accessible_frame_rate"))
+        self._fps_ctrl = _tn(wx.SpinCtrl(panel, min=15, max=60, initial=DEFAULT_FPS,
+                                     size=(90, -1), name=S("accessible_frame_rate")),
+                             "accessible_frame_rate")
         grid.Add(self._fps_ctrl)
         grid.AddSpacer(0)
 
@@ -546,8 +558,9 @@ class MainFrame(wx.Frame):
 
         grid.Add(_t(wx.StaticText(panel, label=S("label_cursor_width")), "label_cursor_width"),
                  0, wx.ALIGN_CENTER_VERTICAL)
-        self._cursor_width_ctrl = wx.SpinCtrl(panel, min=1, max=8, initial=2,
-                                              size=(60, -1), name=S("accessible_cursor_width"))
+        self._cursor_width_ctrl = _tn(wx.SpinCtrl(panel, min=1, max=8, initial=2,
+                                              size=(60, -1), name=S("accessible_cursor_width")),
+                                      "accessible_cursor_width")
         grid.Add(self._cursor_width_ctrl)
         grid.AddSpacer(0)
 
@@ -575,7 +588,8 @@ class MainFrame(wx.Frame):
         grid.Add(_t(wx.StaticText(panel, label=S("label_metronome")), "label_metronome"),
                  0, wx.ALIGN_CENTER_VERTICAL)
         self._metronome_chk = _t(
-            wx.CheckBox(panel, label=S("chk_metronome"), name=S("accessible_metronome")),
+            _tn(wx.CheckBox(panel, label=S("chk_metronome"), name=S("accessible_metronome")),
+                "accessible_metronome"),
             "chk_metronome")
         grid.Add(self._metronome_chk, 0, wx.ALIGN_CENTER_VERTICAL)
         self._btn_metro = _t(
@@ -596,18 +610,20 @@ class MainFrame(wx.Frame):
         grid.Add(self._btn_wm, 0)
 
         # --- fade / volume ---
-        self._fade_frames_ctrl_lbl = None  # tracked via grid
         grid.Add(_t(wx.StaticText(panel, label=S("label_fade_frames")), "label_fade_frames"),
                  0, wx.ALIGN_CENTER_VERTICAL)
-        self._fade_frames_ctrl = wx.SpinCtrl(panel, min=0, max=120, initial=0,
-                                             size=(60, -1), name=S("accessible_fade_frames"))
+        self._fade_frames_ctrl = _tn(wx.SpinCtrl(panel, min=0, max=120, initial=0,
+                                             size=(60, -1), name=S("accessible_fade_frames")),
+                                     "accessible_fade_frames")
         grid.Add(self._fade_frames_ctrl)
         grid.Add(_t(wx.StaticText(panel, label=S("hint_fade_frames")), "hint_fade_frames"),
                  0, wx.ALIGN_CENTER_VERTICAL)
 
         grid.Add(_t(wx.StaticText(panel, label=S("label_music_volume")), "label_music_volume"),
                  0, wx.ALIGN_CENTER_VERTICAL)
-        self._volume_db_ctrl = _spin_double(panel, -12.0, 30.0, 14.5, 0.5, S("accessible_music_volume"))
+        self._volume_db_ctrl = _tn(
+            _spin_double(panel, -12.0, 30.0, 14.5, 0.5, S("accessible_music_volume")),
+            "accessible_music_volume")
         grid.Add(self._volume_db_ctrl)
         grid.Add(_t(wx.StaticText(panel, label=S("hint_music_volume")), "hint_music_volume"),
                  0, wx.ALIGN_CENTER_VERTICAL)
@@ -671,24 +687,22 @@ class MainFrame(wx.Frame):
         self._apply_language()
 
     def _apply_language(self) -> None:
-        # Update all tracked label widgets
-        for widget, key in self._i18n:
-            widget.SetLabel(S(key))
-        # Update color choice item lists (preserving selection)
-        names = _color_names()
-        for ch in self._color_choices:
-            sel = ch.GetSelection()
-            ch.Clear()
-            for name in names:
-                ch.Append(name)
-            ch.SetSelection(sel if sel >= 0 else 0)
-        # Update watermark summary if currently showing "(none)"
-        if not self._watermark.path:
-            self._watermark_summary.SetLabel(S("watermark_none"))
-        # Window title and language button
-        self.SetTitle(S("window_title"))
-        self._btn_lang.SetLabel("English" if _lang == "es" else "Español")
-        self.Layout()
+        self.Freeze()
+        try:
+            for widget, key, method in self._i18n:
+                getattr(widget, method)(S(key))
+            names = _color_names()
+            for ch in self._color_choices:
+                sel = ch.GetSelection()
+                ch.SetItems(names)
+                ch.SetSelection(sel if sel >= 0 else 0)
+            if not self._watermark.path:
+                self._watermark_summary.SetLabel(S("watermark_none"))
+            self.SetTitle(S("window_title"))
+            self._btn_lang.SetLabel("English" if _lang == "es" else "Español")
+            self.Layout()
+        finally:
+            self.Thaw()
 
     # ------------------------------------------------------------------
     # Log helpers
