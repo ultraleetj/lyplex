@@ -407,8 +407,8 @@ class MainFrame(wx.Frame):
                         hint_key: str = "") -> wx.TextCtrl:
             grid.Add(_t(wx.StaticText(panel, label=S(label_key)), label_key),
                      0, wx.ALIGN_CENTER_VERTICAL)
-            tc  = wx.TextCtrl(panel, value=default)
-            btn = _t(wx.Button(panel, label=S("btn_browse"), size=(80, -1)), "btn_browse")
+            tc  = _tn(wx.TextCtrl(panel, value=default), label_key)
+            btn = _tn(_t(wx.Button(panel, label=S("btn_browse"), size=(80, -1)), "btn_browse"), label_key)
             def on_browse(_e, _tc=tc):
                 dlg = make_dialog()
                 if dlg.ShowModal() == wx.ID_OK:
@@ -446,7 +446,7 @@ class MainFrame(wx.Frame):
                             hint_key: str = "") -> wx.TextCtrl:
             grid.Add(_t(wx.StaticText(panel, label=S(label_key)), label_key),
                      0, wx.ALIGN_CENTER_VERTICAL)
-            tc = wx.TextCtrl(panel, value=f"{initial:.{digits}f}", size=(80, -1))
+            tc = _tn(wx.TextCtrl(panel, value=f"{initial:.{digits}f}", size=(80, -1)), label_key)
             sp = wx.SpinButton(panel, style=wx.SP_VERTICAL)
             sp.SetRange(-32768, 32767)
             sp.SetValue(0)
@@ -495,7 +495,7 @@ class MainFrame(wx.Frame):
                       hint_key: str = "") -> wx.Choice:
             grid.Add(_t(wx.StaticText(panel, label=S(label_key)), label_key),
                      0, wx.ALIGN_CENTER_VERTICAL)
-            ch = wx.Choice(panel, choices=_color_names())
+            ch = _tn(wx.Choice(panel, choices=_color_names()), label_key)
             ch.SetSelection(_default_color_idx(default_rgb))
             self._color_choices.append(ch)
             swatch = wx.Panel(panel, size=(20, 20))
